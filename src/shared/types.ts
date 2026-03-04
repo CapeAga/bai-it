@@ -1,7 +1,3 @@
-// ========== 阅读模式 ==========
-
-export type ReadingMode = "scan" | "deep";
-
 // ========== LLM 配置 ==========
 
 /** llm-adapter 内部使用的扁平格式（从 provider 推导） */
@@ -102,7 +98,8 @@ export function migrateLLMConfig(raw: unknown): LLMMultiConfig {
 // ========== Content Script ↔ Service Worker 消息 ==========
 
 export type Message =
-  | { type: "chunk"; sentences: string[]; mode: ReadingMode; source_url?: string }
+  | { type: "chunk"; sentences: string[]; source_url?: string }
+  | { type: "hasApiKey" }
   | { type: "getConfig" }
   | { type: "updateConfig"; config: Partial<BaitConfig> }
   | { type: "checkActive" }

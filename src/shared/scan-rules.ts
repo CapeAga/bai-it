@@ -66,10 +66,15 @@ const TRANSITION = new Set([
   "meanwhile", "otherwise", "consequently", "accordingly",
 ]);
 
-/** fine 模式介词拆分：常见引出新信息的介词 */
+/** fine 模式介词拆分：常见引出新信息的介词/短语标记 */
 const PREPOSITION_FINE = new Set([
   "about", "from", "into", "through", "across",
   "toward", "towards", "without", "despite",
+  // 高频介词（配合 4+词前/4+词后约束，不会过度拆分）
+  "between", "on", "for", "with", "by", "in",
+  "over", "under", "beyond", "against",
+  // 分词/比较短语标记
+  "compared", "including",
 ]);
 
 /** fine 模式疑问/关系副词：引出从句 */

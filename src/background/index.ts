@@ -290,6 +290,12 @@ async function handleMessage(
       return { state: "active" };
     }
 
+    case "hasApiKey": {
+      const cfg = await getConfig();
+      const llmCfg = resolveLLMConfig(cfg.llm);
+      return { hasKey: !!llmCfg.apiKey };
+    }
+
     case "getConfig":
       return getConfig();
 

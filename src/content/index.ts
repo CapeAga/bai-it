@@ -2,22 +2,19 @@
  * Content Script — 页面注入
  *
  * 职责：
- * 1. 模式判断（扫读/细读）
- * 2. 激活后：遍历 DOM 提取文本 → 按模式处理
- *    - 细读模式：规则引擎预过滤 → 复杂句发给 Service Worker → 简单句挂手动触发
- *    - 扫读模式：本地规则拆分 → 复杂句降级 LLM（第 5 步实现）
+ * 1. 统一扫读：所有英文网页自动本地拆分 + 标注生词
+ * 2. 手动掰句：未拆开的句子挂触发按钮（无 API → 本地强制拆，有 API → LLM）
  * 3. 分块结果注入 DOM
  * 4. MutationObserver 监听动态内容
- * 5. Intersection Observer 视口节流
  */
 
-import { isEnglish, estimateComplexity } from "../shared/rule-engine.ts";
+import { isEnglish } from "../shared/rule-engine.ts";
 import { scanSplit, toChunkedString } from "../shared/scan-rules.ts";
 import {
   loadFrequencyList, loadDictionary, loadIndustryPack,
   annotateWords, toNewWordsFormat, isLoaded,
 } from "../shared/vocab.ts";
-import type { BaitConfig, ChunkResult, BackgroundMessage, ReadingMode } from "../shared/types.ts";
+import type { BaitConfig, ChunkResult, BackgroundMessage } from "../shared/types.ts";
 import { DEFAULT_CONFIG } from "../shared/types.ts";
 import { createChunkedElement } from "./renderer.ts";
 import { ENLEARN_STYLES } from "./styles.ts";
@@ -29,34 +26,9 @@ import wordFrequency from "../../data/word-frequency.json";
 import dictEntries from "../../data/dict-ecdict.json";
 import industryAi from "../../data/industry-ai.json";
 
-// ========== 模式判断 ==========
-
-function detectReadingMode(url: string): ReadingMode {
-  const hostname = new URL(url).hostname;
-  const pathname = new URL(url).pathname;
-
-  // Twitter / X
-  if (hostname === "twitter.com" || hostname === "x.com") {
-    // 详情页 → 细读
-    if (/\/\w+\/status\/\d+/.test(pathname)) return "deep";
-    // 其他（首页、搜索等）→ 扫读
-    return "scan";
-  }
-
-  // Reddit
-  if (hostname.includes("reddit.com")) {
-    if (pathname.includes("/comments/")) return "deep";
-    return "scan";
-  }
-
-  // 默认细读
-  return "deep";
-}
-
 // ========== 状态 ==========
 
 let config: BaitConfig = { ...DEFAULT_CONFIG };
-let currentMode: ReadingMode = "deep";
 let isActive = false;
 let isPaused = false;
 let processedElements = new WeakSet<Element>();
@@ -215,7 +187,6 @@ async function init(): Promise<void> {
   }
 
   config = await sendMessage({ type: "getConfig" }) as BaitConfig;
-  currentMode = detectReadingMode(window.location.href);
 
   const response = await sendMessage({ type: "checkActive" }) as { active: boolean };
   if (response.active) {
@@ -266,12 +237,18 @@ function deactivate(): void {
   }
   pendingElements.clear();
 
+  // 1. 恢复 in-place 替换的元素（策略 B）
+  restoreReplacedElements();
+
+  // 2. 移除兄弟模式的 chunked 元素（策略 A）
   const chunkedEls = document.querySelectorAll(".enlearn-chunked");
   for (const el of chunkedEls) el.remove();
 
+  // 3. 恢复被隐藏的原文（策略 A）
   const hiddenEls = document.querySelectorAll(".enlearn-original-hidden");
   for (const el of hiddenEls) el.classList.remove("enlearn-original-hidden");
 
+  // 4. 移除手动触发按钮
   const triggerWraps = document.querySelectorAll(".enlearn-trigger-wrap, [data-enlearn-trigger]");
   for (const wrap of triggerWraps) {
     const trigger = wrap.querySelector(".enlearn-trigger");
@@ -324,7 +301,10 @@ function resumeProcessing(): void {
  * 清除所有已渲染的分块，重置处理状态，用当前配置重新扫描页面
  */
 function reprocessPage(): void {
-  // 移除已渲染的分块元素
+  // 恢复 in-place 替换的元素（策略 B）
+  restoreReplacedElements();
+
+  // 移除兄弟模式的分块元素（策略 A）
   document.querySelectorAll(".enlearn-chunked").forEach(el => el.remove());
 
   // 恢复被隐藏的原文
@@ -356,10 +336,6 @@ function reprocessPage(): void {
 function onStorageChanged(changes: { [key: string]: chrome.storage.StorageChange }): void {
   let needReprocess = false;
 
-  if (changes.sensitivity) {
-    config.sensitivity = changes.sensitivity.newValue as number;
-    needReprocess = true;
-  }
   if (changes.chunkIntensity) {
     config.chunkIntensity = changes.chunkIntensity.newValue as number;
     needReprocess = true;
@@ -414,19 +390,23 @@ function copyFontStyles(source: Element, target: HTMLElement): void {
 /**
  * 将 chunked 元素插入 DOM，替换原文显示。
  *
- * 信息流（Reddit、Twitter 等）常用 overflow:hidden / line-clamp 截断帖子预览。
- * 如果直接插在 <p> 旁边，多行的分块结果会被裁掉。
- * 策略：从目标元素向上找，跳过所有截断容器，在截断容器外层插入。
+ * 两种策略：
+ * A. 信息流（Twitter/Reddit）：overflow:hidden 截断预览 → 在截断容器外层插入兄弟元素
+ * B. 文章站（Substack/Medium）：无截断 → 直接替换原始元素内部内容（避免被 React 清掉）
  */
 function insertChunkedElement(
   originalEl: Element,
   chunkedEl: HTMLElement,
 ): void {
-  // 从原始元素向上走，找到最外层的截断容器
+  // 从原始元素向上走，找截断容器
   let hideTarget: Element = originalEl;
   let current = originalEl.parentElement;
 
   for (let i = 0; i < 6 && current; i++) {
+    // 绝不跨过链接或文章边界，否则会破坏点击导航（如 Twitter 引用推文）
+    const tag = current.tagName;
+    if (tag === "A" || tag === "ARTICLE") break;
+
     const cls = current.className || "";
     const cs = window.getComputedStyle(current);
     const isClipping =
@@ -444,9 +424,58 @@ function insertChunkedElement(
     }
   }
 
-  // 隐藏截断容器（或仅隐藏原始元素），在其后插入 chunked 元素
-  hideTarget.classList.add("enlearn-original-hidden");
-  hideTarget.parentNode?.insertBefore(chunkedEl, hideTarget.nextSibling);
+  if (hideTarget !== originalEl) {
+    // 策略 A：有截断容器（Twitter/Reddit）→ 隐藏容器，插入兄弟
+    hideTarget.classList.add("enlearn-original-hidden");
+    hideTarget.parentNode?.insertBefore(chunkedEl, hideTarget.nextSibling);
+
+    // 转发点击到被隐藏的原始元素（它保留了 React Fiber 节点）
+    // React 事件委托能识别该元素，正常触发推文导航等 onClick handler
+    chunkedEl.addEventListener("click", (e) => {
+      const target = e.target as Element;
+      if (target.closest?.(".enlearn-trigger, .enlearn-word, a")) return;
+
+      hideTarget.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      }));
+    });
+  } else {
+    // 策略 B：无截断（文章站）→ 保留原始元素，替换内部内容
+    // 拦截冒泡，防止 Substack 等 React 站点因 click 重渲染导致内容消失
+    chunkedEl.addEventListener("click", (e) => {
+      if ((e.target as Element).closest?.(".enlearn-trigger")) return;
+      e.stopPropagation();
+    });
+    const fragment = document.createDocumentFragment();
+    while (originalEl.firstChild) fragment.appendChild(originalEl.firstChild);
+    (originalEl as any)._enlearnFragment = fragment;
+    originalEl.appendChild(chunkedEl);
+    originalEl.classList.add("enlearn-replaced");
+  }
+}
+
+/**
+ * 恢复所有 in-place 替换的元素（策略 B）
+ */
+function restoreReplacedElements(): void {
+  document.querySelectorAll(".enlearn-replaced").forEach(el => {
+    // 移除我们放进去的 chunked 内容
+    const chunked = el.querySelector(".enlearn-chunked");
+    if (chunked) chunked.remove();
+
+    // 恢复原始子节点
+    const fragment = (el as any)._enlearnFragment as DocumentFragment | undefined;
+    if (fragment) {
+      el.appendChild(fragment);
+      delete (el as any)._enlearnFragment;
+    }
+
+    el.classList.remove("enlearn-replaced");
+  });
 }
 
 // ========== DOM 扫描 ==========
@@ -483,90 +512,59 @@ function scanPage(): void {
     if (text.length < 10) continue;
     if (!isEnglish(text)) continue;
 
-    if (currentMode === "deep") {
-      // 细读模式：规则引擎判断
-      const complexity = estimateComplexity(text);
+    // 太短的文本不值得处理（短推文、标题等）
+    if (text.split(/\s+/).length < 8) continue;
 
-      if (complexity < config.sensitivity) {
-        // 低复杂度：手动触发按钮
-        processedElements.add(el);
-        addManualTrigger(el, text);
-        continue;
-      }
+    // 统一扫读：按段落/句子本地拆分
+    processedElements.add(el);
+    const paragraphs = extractParagraphs(el);
+    const allChunkedLines: string[] = [];
+    let hasAnyChunks = false;
 
-      // 高复杂度：发给 LLM
-      pendingElements.set(el, text);
-      processedElements.add(el);
-      intersectionObserver?.observe(el);
-    } else {
-      // 扫读模式：按段落/句子独立拆分
-      processedElements.add(el);
-      const paragraphs = extractParagraphs(el);
-      const allChunkedLines: string[] = [];
-      let hasAnyChunks = false;
-      let hasNeedsLLM = false;
+    for (let pi = 0; pi < paragraphs.length; pi++) {
+      if (pi > 0) allChunkedLines.push(""); // 段落间空行
 
-      for (let pi = 0; pi < paragraphs.length; pi++) {
-        if (pi > 0) allChunkedLines.push(""); // 段落间空行
-
-        const sentences = splitIntoSentences(paragraphs[pi]);
-        for (const sentence of sentences) {
-          const scanResult = scanSplit(sentence, config.scanThreshold, config.chunkGranularity);
-          if (scanResult.needsLLM) {
-            hasNeedsLLM = true;
-            allChunkedLines.push(sentence);
-          } else if (scanResult.chunks.length > 1) {
-            hasAnyChunks = true;
-            allChunkedLines.push(toChunkedString(scanResult.chunks));
-          } else {
-            allChunkedLines.push(sentence);
-          }
+      const sentences = splitIntoSentences(paragraphs[pi]);
+      for (const sentence of sentences) {
+        const scanResult = scanSplit(sentence, config.scanThreshold, config.chunkGranularity);
+        if (scanResult.chunks.length > 1) {
+          hasAnyChunks = true;
+          allChunkedLines.push(toChunkedString(scanResult.chunks));
+        } else {
+          allChunkedLines.push(sentence);
         }
       }
+    }
 
-      // 不管是否拆分，都先做生词标注
-      const vocabAnnotations = isLoaded()
-        ? annotateWords(text, knownWords, config.industryPacks)
-        : [];
+    // 生词标注（不管是否拆分）
+    const vocabAnnotations = isLoaded()
+      ? annotateWords(text, knownWords, config.industryPacks)
+      : [];
 
-      if (hasNeedsLLM && !hasAnyChunks) {
-        // 全部需要 LLM → 走 LLM 路径
-        pendingElements.set(el, text);
-        intersectionObserver?.observe(el);
-      } else if (hasAnyChunks) {
-        // 有本地拆分结果 → 渲染（带生词标注）
-        const chunkedString = allChunkedLines.join("\n");
-        const chunkResult: ChunkResult = {
-          original: text,
-          chunked: chunkedString,
-          isSimple: false,
-          newWords: toNewWordsFormat(vocabAnnotations),
-        };
-        const chunkedEl = createChunkedElement(chunkResult, config.chunkIntensity);
-        if (chunkedEl) {
-          copyFontStyles(el, chunkedEl);
-          insertChunkedElement(el, chunkedEl);
+    if (hasAnyChunks) {
+      // 有本地拆分结果 → 渲染（带生词标注）
+      const chunkedString = allChunkedLines.join("\n");
+      const chunkResult: ChunkResult = {
+        original: text,
+        chunked: chunkedString,
+        isSimple: false,
+        newWords: toNewWordsFormat(vocabAnnotations),
+      };
+      const chunkedEl = createChunkedElement(chunkResult, config.chunkIntensity);
+      if (chunkedEl) {
+        copyFontStyles(el, chunkedEl);
+        insertChunkedElement(el, chunkedEl);
 
-          if (vocabAnnotations.length > 0) {
-            addWords(chunkResult.newWords, text);
-          }
-        }
-      } else if (vocabAnnotations.length > 0) {
-        // 句子没拆开但有生词 → 只标注生词（不改变显示结构）
-        const chunkResult: ChunkResult = {
-          original: text,
-          chunked: text,
-          isSimple: false,
-          newWords: toNewWordsFormat(vocabAnnotations),
-        };
-        const chunkedEl = createChunkedElement(chunkResult, config.chunkIntensity);
-        if (chunkedEl) {
-          copyFontStyles(el, chunkedEl);
-          insertChunkedElement(el, chunkedEl);
+        if (vocabAnnotations.length > 0) {
           addWords(chunkResult.newWords, text);
         }
       }
-      // 完全不可拆且无生词 → 保持原样
+    } else {
+      // 没拆开 → 保留原始 DOM，只在原始元素上挂手动触发
+      if (vocabAnnotations.length > 0) {
+        addWords(toNewWordsFormat(vocabAnnotations), text);
+      }
+      addManualTrigger(el, text);
     }
   }
 }
@@ -587,7 +585,7 @@ function addManualTrigger(el: Element, text: string): void {
   const btn = document.createElement("span");
   btn.className = "enlearn-trigger";
   btn.innerHTML = TRIGGER_ICON_SVG;
-  btn.title = "拆解句子结构";
+  btn.title = "掰开这句";
 
   btn.addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -595,17 +593,42 @@ function addManualTrigger(el: Element, text: string): void {
     btn.classList.add("enlearn-trigger-loading");
 
     try {
-      const response = await sendMessage({
-        type: "chunk",
-        sentences: [text],
-        mode: currentMode,
-        source_url: window.location.href,
-      }) as { results: ChunkResult[] } | null;
+      // 检查是否有 API key
+      const keyCheck = await sendMessage({ type: "hasApiKey" }) as { hasKey: boolean };
 
-      if (response?.results?.[0] && !response.results[0].isSimple) {
-        const result = response.results[0];
+      let result: ChunkResult | null = null;
+
+      if (keyCheck.hasKey) {
+        // 有 API → 发 LLM 深度分析
+        const response = await sendMessage({
+          type: "chunk",
+          sentences: [text],
+          source_url: window.location.href,
+        }) as { results: ChunkResult[] } | null;
+
+        if (response?.results?.[0] && !response.results[0].isSimple) {
+          result = response.results[0];
+        }
+      } else {
+        // 无 API → 本地强制拆分（最低阈值 + 最细颗粒度）
+        const scanResult = scanSplit(text, "short", "fine");
+        if (scanResult.chunks.length > 1) {
+          const vocabAnnotations = isLoaded()
+            ? annotateWords(text, knownWords, config.industryPacks)
+            : [];
+          result = {
+            original: text,
+            chunked: toChunkedString(scanResult.chunks),
+            isSimple: false,
+            newWords: toNewWordsFormat(vocabAnnotations),
+          };
+        }
+      }
+
+      if (result) {
         const chunkedEl = createChunkedElement(result, config.chunkIntensity);
         if (chunkedEl) {
+          copyFontStyles(el, chunkedEl);
           insertChunkedElement(el, chunkedEl);
           btn.remove();
 
@@ -614,6 +637,7 @@ function addManualTrigger(el: Element, text: string): void {
           }
         }
       } else {
+        // 拆不动 → 移除按钮
         btn.remove();
         el.classList.remove("enlearn-trigger-wrap");
         el.removeAttribute("data-enlearn-trigger");
@@ -679,7 +703,6 @@ async function flushProcessQueue(): Promise<void> {
       sendMessage({
         type: "chunk",
         sentences,
-        mode: currentMode,
         source_url: window.location.href,
       }),
       timeoutPromise,
