@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { NavBar } from "./components/NavBar.tsx";
 import { OnboardingBanner } from "./components/OnboardingBanner.tsx";
+import type { BannerVariant } from "./components/OnboardingBanner.tsx";
 import { WordTooltip } from "./components/WordTooltip.tsx";
 import { Dashboard } from "./tabs/Dashboard.tsx";
 import { DailyReview } from "./tabs/DailyReview.tsx";
@@ -29,9 +30,12 @@ export function App() {
   // Lifted state: DB and config
   const db = useDB();
   const { config, loading: configLoading, saveConfig, updateLLM } = useConfig();
-  const { state: onboardingState, loading: onboardingLoading } = useOnboardingState(db, config, configLoading);
+  const onboarding = useOnboardingState(db, config, configLoading);
 
-  const isExample = onboardingState !== "has-data";
+  // Per-tab isExample
+  const dashboardIsExample = !onboarding.hasData;
+  const reviewSentencesIsExample = !onboarding.hasAnalyzedData;
+
   const masteredWordsValue = useMasteredWordsProvider(db);
 
   const handleTabChange = useCallback((tab: TabKey) => {
@@ -49,6 +53,26 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  // Banner variant based on active tab
+  function getBannerVariant(): BannerVariant {
+    if (onboarding.loading) return null;
+    if (activeTab === "settings") return null;
+
+    if (activeTab === "dashboard") {
+      if (!onboarding.hasData) {
+        return onboarding.hasApi ? "browse-with-api" : "browse";
+      }
+      return null;
+    }
+
+    // review / sentences — based on hasAnalyzedData
+    if (!onboarding.hasAnalyzedData) {
+      if (!onboarding.hasApi) return "api";
+      return "browse-with-api";
+    }
+    return null;
+  }
+
   return (
     <>
       <div className="noise" />
@@ -57,25 +81,31 @@ export function App() {
         <MasteredWordsContext.Provider value={masteredWordsValue}>
           <NavBar activeTab={activeTab} onTabChange={handleTabChange} />
 
-          {/* Onboarding banner — above content, not shown on settings tab */}
-          {activeTab !== "settings" && !onboardingLoading && (
-            <OnboardingBanner
-              state={onboardingState}
-              onGoToSettings={() => handleTabChange("settings")}
-            />
-          )}
+          {/* Onboarding banner — variant depends on active tab */}
+          <OnboardingBanner
+            variant={getBannerVariant()}
+            onGoToSettings={() => handleTabChange("settings")}
+          />
 
           <div style={{ position: "relative" }}>
             <div className={`tab-panel ${activeTab === "dashboard" ? "active" : ""}`}>
               {activeTab === "dashboard" && (
-                <Dashboard key={tabKey} db={db} isExample={isExample} onGoToReview={() => handleTabChange("review")} />
+                <Dashboard
+                  key={tabKey}
+                  db={db}
+                  isExample={dashboardIsExample}
+                  pendingCount={onboarding.pendingCount}
+                  hasApi={onboarding.hasApi}
+                  onGoToReview={() => handleTabChange("review")}
+                  onGoToSettings={() => handleTabChange("settings")}
+                />
               )}
             </div>
             <div className={`tab-panel ${activeTab === "review" ? "active" : ""}`}>
-              {activeTab === "review" && <DailyReview key={tabKey} db={db} isExample={isExample} />}
+              {activeTab === "review" && <DailyReview key={tabKey} db={db} isExample={reviewSentencesIsExample} />}
             </div>
             <div className={`tab-panel ${activeTab === "sentences" ? "active" : ""}`}>
-              {activeTab === "sentences" && <Sentences key={tabKey} db={db} isExample={isExample} />}
+              {activeTab === "sentences" && <Sentences key={tabKey} db={db} isExample={reviewSentencesIsExample} />}
             </div>
             <div className={`tab-panel ${activeTab === "settings" ? "active" : ""}`}>
               {activeTab === "settings" && (

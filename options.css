@@ -1135,6 +1135,26 @@ body {
 .vt-arrow-bot { bottom: -7px; }
 .vt-arrow-top { top: -7px; }
 
+/* ═══ NUDGE BANNER ═══ */
+.nudge-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  margin-top: 24px;
+  margin-bottom: 12px;
+  background: rgba(239,68,68,0.03);
+  border: 1px solid rgba(239,68,68,0.08);
+  border-radius: 10px;
+}
+
+.nudge-text {
+  font-size: 13px;
+  color: rgba(255,255,255,0.4);
+  line-height: 1.6;
+  flex: 1;
+}
+
 /* ═══ REDUCED MOTION ═══ */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

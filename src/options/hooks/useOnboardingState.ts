@@ -1,39 +1,53 @@
 import { useState, useEffect } from "react";
 import type { BaitConfig } from "../../shared/types.ts";
-import { learningRecordDAO } from "../../shared/db.ts";
+import { learningRecordDAO, pendingSentenceDAO } from "../../shared/db.ts";
 
-export type OnboardingState = "no-key" | "has-key-no-data" | "has-data";
+export interface OnboardingInfo {
+  hasApi: boolean;           // 任一 provider 有 key
+  hasData: boolean;          // pending_count + analyzed_count > 0
+  hasAnalyzedData: boolean;  // learning_records count > 0
+  pendingCount: number;      // 用于 Dashboard 温和引导条显示数字
+  loading: boolean;
+}
 
 export function useOnboardingState(
   db: IDBDatabase | null,
   config: BaitConfig,
   configLoading: boolean
-): { state: OnboardingState; loading: boolean } {
-  const [state, setState] = useState<OnboardingState>("no-key");
-  const [loading, setLoading] = useState(true);
+): OnboardingInfo {
+  const [info, setInfo] = useState<OnboardingInfo>({
+    hasApi: false,
+    hasData: false,
+    hasAnalyzedData: false,
+    pendingCount: 0,
+    loading: true,
+  });
 
   useEffect(() => {
     if (configLoading) return;
 
-    // Check if any provider has an API key
-    const hasKey = Object.values(config.llm.providers).some(
+    const hasApi = Object.values(config.llm.providers).some(
       (p) => p.apiKey && p.apiKey.trim() !== ""
     );
 
-    if (!hasKey) {
-      setState("no-key");
-      setLoading(false);
+    if (!db) {
+      setInfo({ hasApi, hasData: false, hasAnalyzedData: false, pendingCount: 0, loading: true });
       return;
     }
 
-    // Has key — check if there's any data
-    if (!db) return;
-
-    learningRecordDAO.getAll(db).then((records) => {
-      setState(records.length > 0 ? "has-data" : "has-key-no-data");
-      setLoading(false);
+    Promise.all([
+      pendingSentenceDAO.getAll(db),
+      learningRecordDAO.getAll(db),
+    ]).then(([pending, records]) => {
+      setInfo({
+        hasApi,
+        hasData: pending.length + records.length > 0,
+        hasAnalyzedData: records.length > 0,
+        pendingCount: pending.filter(p => !p.analyzed).length,
+        loading: false,
+      });
     });
   }, [db, config, configLoading]);
 
-  return { state, loading };
+  return info;
 }
