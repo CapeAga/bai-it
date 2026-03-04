@@ -4,37 +4,52 @@
 
 ## 当前状态
 
-**Phase 1 统一扫读重构已完成编码 + 验证。** 189 个单元测试全通过，构建正常。Twitter / Substack / Reddit 实测通过。
+**Phase 2 编码 + 生词 Tooltip + 掌握标记 — 全部完成并提交。** 199 个单元测试全通过，构建正常。已完成浏览器基本验收。
 
-### 本次完成（0304 编码 session）
+### 本次完成（0304 Options 生词 Tooltip + 掌握标记）
 
-**Phase 1 统一扫读 + 手动掰句 — 编码 + bug 修复：**
+**生词 Tooltip + 掌握标记 — 全部 7 步完成：**
 
-1. **Content Script 重构**
-   - 删除 `detectReadingMode()` + `currentMode`，所有英文网页统一自动扫读
-   - `scanPage()` 统一走本地 `scanSplit`，不再区分 scan/deep
-   - 短文本（< 8 词）直接跳过，不处理
-   - vocab-only 不再套 `.enlearn-chunked` 壳，保留原始 DOM + 只挂触发按钮
-   - 手动掰句两路：无 API → 本地强制拆（short/fine），有 API → LLM
+1. **useMasteredWords context** (`src/options/hooks/useMasteredWords.ts` 新建)
+   - `MasteredWordsContext` + `useMasteredWordsProvider` + `useMasteredWords`
+   - 加载/持久化 `chrome.storage.local.knownWords`
+   - `toggleMastered(word)` — toggle Set + 同步 IndexedDB vocabDAO
 
-2. **DOM 插入双策略**（解决 Twitter + Substack 兼容）
-   - **策略 A**（Twitter/Reddit，有 `overflow:hidden`）：隐藏截断容器 + 兄弟插入
-     - `dispatchEvent` 到隐藏的原始元素保留 React Fiber，恢复推文点击导航
-     - 向上遍历遇到 `<a>` / `<article>` 边界停止
-   - **策略 B**（Substack/Medium，无截断）：in-place 替换原始元素内容
-     - `stopPropagation` 防止 React 重渲染导致内容消失
-     - `restoreReplacedElements()` 恢复机制
+2. **ChunkLines 改造** (`src/options/components/ChunkLines.tsx`)
+   - vocab span 加 `data-word` / `data-def` 属性
+   - 已掌握词加 `.vocab-mastered` class（`color: inherit` 融入所在行颜色）
 
-3. **Background**：新增 `hasApiKey` 消息处理
+3. **WordTooltip 全局组件** (`src/options/components/WordTooltip.tsx` 新建)
+   - document 级事件委托（mouseover/mouseout `.vocab[data-def]`）
+   - 精致暗色毛玻璃风格：`filter: drop-shadow` 双层阴影 + `border-top` 光感
+   - SVG 箭头（继承 drop-shadow）
+   - `scale(0.96→1) + opacity` 入场动画
+   - 两阶段定位：render → useLayoutEffect 测量 → 精确定位
+   - 展示词名（红色）+ 释义 + 低调掌握按钮（圆圈/对勾图标）
 
-4. **Types**：删除 `ReadingMode`，chunk 消息移除 `mode` 字段，新增 `hasApiKey`
+4. **App.tsx 挂载** — `MasteredWordsContext.Provider` 包裹 + `WordTooltip`
 
-5. **Scan Rules 优化**：`PREPOSITION_FINE` 从 9 → 21 个（+between, on, for, with, by, in, over, under, beyond, against, compared, including），fine 模式拆分更细
+5. **Sentences.tsx** — VocabPill 接入 `useMasteredWords`
 
-### 上次 session 完成
+6. **DailyReview.tsx** — 删除本地 `masteredIds`，改用共享 context
 
-1. 统一扫读架构讨论 + 文档更新（prd.md / architecture.md / testing.md）
-2. 管理端示例数据 + 提示条 — 编码完成 + Puppeteer 截图验收通过
+7. **CSS** — `.vocab-mastered`（color: inherit）、`.vt` 系列 tooltip 样式
+
+**额外修复：**
+- VocabPill 按钮 `stopPropagation` 防止卡片收起
+- 断句练习 `.break-point` 点击区扩大（`::before` 画 3px 竖线，外层 15px 透明点击区）
+- 看答案按钮与卡片间距修复（`marginTop: 16px`）
+
+### 上次 session 完成（0304 Phase 2 编码）
+
+**Phase 2 数据采集 + 管理端懒处理 — 全部 6 步编码完成：**
+
+1. **类型定义** — `PendingSentenceRecord`、`FullAnalysisResult`、新消息类型
+2. **数据层** — DB_VERSION 1→2，`pending_sentences` 表，`pendingSentenceDAO`
+3. **单元测试** — 10 个新测试覆盖 CRUD、去重、排序、分页、v1→v2 升级
+4. **LLM 适配层** — `analyzeSentenceFull()` 独立 prompt + JSON 解析
+5. **Background** — `saveSentence` / `analyzeSentences` handler，逐条分析 + 500ms 限流
+6. **难句集 Tab** — pending + analyzed 混合列表、自动触发分析、实时填充、分页
 
 ### 注意事项
 
@@ -46,22 +61,20 @@
 
 ---
 
-## 下一步：Phase 2 数据采集 + 管理端懒处理（大）
+## 下一步
 
-**新增：**
-- `pending_sentences` 表（db.ts，schema 版本升级）
-- Background 处理 `saveSentence` 消息
-
-**改动：**
-- Content Script 扫读后发消息给 Background 存 pending_sentences
-- 手动触发的句子标记 `manual: true`
-- 难句集 Tab 改为从 pending_sentences 拉数据 → 按页发 LLM → 逐条渲染
-
-**技术决策（已定）：**
-- 采集端：Content Script 发消息给 Background 写（方案 B，保持 content.js 轻量）
-- 懒处理：Options 页发消息给 Background 调 LLM（方案 B，LLM 逻辑集中在 background）
-
-**验收标准**：见 `docs/testing.md`「统一扫读 + 手动掰句」阶段二
+**浏览器验收（完整流程）**：
+1. 浏览英文网页 → DevTools IndexedDB `openen-data` → `pending_sentences` 表有数据
+2. 数据去重：同一句子只存一次
+3. 手动触发的句子 `manual: true`
+4. 打开管理端难句集 Tab → 看到 pending 卡片 + "分析中..." badge
+5. 有 API key 时 → LLM 分析结果逐条填充，卡片变为 analyzed 状态
+6. 分页可用（> 10 条时显示翻页）
+7. v1→v2 升级：旧数据库用户首次打开不丢数据
+8. 总览 Tab → hover 红色词 → tooltip 显示释义 + "掌握"按钮
+9. 点击"掌握" → 词融入所在行颜色（主干白/缩进灰），tooltip 消失
+10. 切 Tab → 掌握状态跨 Tab 共享
+11. 刷新页面 → 掌握状态持久化
 
 ---
 
@@ -78,6 +91,7 @@
 |------|------|
 | `playground-pages.html` | **六页面设计原型（定稿）**：总览 / Popup / 每日回味 / Content Script / 难句集 / 设置 |
 | `playground-onboarding.html` | **引导态设计原型（定稿）**：三种状态切换（无 key / 有 key 无数据 / 有真实数据），示例数据 + 提示条 |
+| `playground-vocab-tooltip.html` | **生词 Tooltip + 掌握态设计**：三种 tooltip 风格 + 掌握态对比（已选定"精致"风格 + inherit 融入） |
 | `playground-logo-final.html` | **Logo 定稿确认**（ZCOOL KuaiLe + Nunito 600）|
 | `playground-visual-directions.html` | 三种字体方向对比（已选定「锐 Sharp」）|
 | `playground-logo-v5.html` | Logo 可爱度 12 档梯度微调 |
@@ -111,6 +125,12 @@
 - 分析结果缓存到 `learning_records`，不重复发
 - 详见 `docs/prd.md`「数据采集策略」章节
 
+### 生词 Tooltip 设计（0304 新）
+- **Tooltip 风格**：精致 — 词名（红色）+ 释义 + 低调掌握按钮
+- **视觉**：`filter: drop-shadow` 双层阴影 + `border-top` 光感 + SVG 箭头 + `scale(0.96→1)` 动画
+- **掌握态**：`color: inherit` — 融入所在行颜色（主干行白色、缩进行灰色）
+- **持久化**：`chrome.storage.local.knownWords` + IndexedDB 双写
+
 ### 生词标注方案
 - **不直接显示中文释义**，用 hover 虚线（避免视觉干扰）
 - **三层词汇源**：行业术语包（V1 必须有 AI 包）> 通用离线词典 > LLM 语境化释义
@@ -140,6 +160,8 @@
 - [x] 管理端示例数据 + 提示条（Puppeteer 截图验收通过）
 - [x] 统一扫读架构讨论 + 文档更新（prd.md / architecture.md / testing.md）
 - [x] **Phase 1 统一扫读重构 + Twitter/Substack 兼容**（编码 + 验证通过）
+- [x] **Phase 2 数据采集 + 管理端懒处理**（编码完成，199 测试通过）
+- [x] **Options 生词 Tooltip + 掌握标记**（精致风格 + inherit 融入 + 持久化）
 
 ## 编码细节
 
@@ -155,11 +177,11 @@
 
 ### IndexedDB 数据层
 - **数据库**：`openen-data`（与缓存数据库 `openen-cache` 独立）— 名称保持不改，避免丢失用户数据
-- **9+1 张表**：原 9 张 + 新增 `pending_sentences`（待编码）
+- **10 张表**：原 9 张 + `pending_sentences`
 - **全局规则**：UUID 主键、`updated_at` + `is_dirty`（V2 同步预留）、`onupgradeneeded` schema 版本管理
 - **SM-2 算法**：review_items 表内置间隔重复
 - **settings 表**：键值对存储，给 Options 页学习系统用。Popup/Background 的 LLM 配置仍走 `chrome.storage.sync`
-- **测试**：fake-indexeddb mock，58 个单元测试覆盖全部表 CRUD + SM-2 + 跨表业务场景
+- **测试**：fake-indexeddb mock，68 个单元测试覆盖全部表 CRUD + SM-2 + 跨表业务场景 + v1→v2 升级
 
 ### 浏览器测试
 - Puppeteer 做浏览器验收测试
