@@ -19,7 +19,7 @@ npm run release    # 发布：跑测试 + 构建 + 打包 bai-it.zip
 
 ## 发布
 
-**用户说"发布"时，Claude 自主执行完整发布流程，不需要用户跑任何命令。** 详见 [docs/release.md](./docs/release.md)。
+**当用户表达"可以发版了"的意图时（不限于特定措辞），Claude 自主执行完整发布流程，用户不需要跑任何命令。** 详见 [docs/release.md](./docs/release.md)。
 
 流程概要：确认版本号 → 改 manifest.json → `npm run release` → git commit + tag + push → `gh release create` → 提醒用户手动上传商店 → 清理 zip。
 
