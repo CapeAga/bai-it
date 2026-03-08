@@ -803,9 +803,66 @@ const DOM_SELECTORS = [
   '.article-body p', '#content p', '.page-content p',
 ].join(", ");
 
+// 块级标签集合，用于判断"叶子文本块"
+const BLOCK_TAGS = new Set([
+  "DIV", "P", "LI", "BLOCKQUOTE", "TD", "TH",
+  "SECTION", "ARTICLE", "MAIN", "DD", "DT", "FIGCAPTION",
+]);
+
+// 兜底扫描排除的标签
+const SKIP_TAGS = new Set([
+  "SCRIPT", "STYLE", "NOSCRIPT", "SVG", "CANVAS",
+  "VIDEO", "AUDIO", "IFRAME", "OBJECT", "EMBED",
+  "INPUT", "TEXTAREA", "SELECT", "BUTTON", "LABEL",
+  "NAV", "HEADER", "FOOTER",
+]);
+
+/**
+ * 兜底扫描：找出页面上"文本密集的叶子块级元素"
+ * 叶子 = 自己是块级元素，但内部没有子块级元素（只有文本/行内元素）
+ */
+function findTextLeafElements(): Element[] {
+  const results: Element[] = [];
+  const allElements = document.body.querySelectorAll("*");
+
+  for (const el of allElements) {
+    // 只看块级标签
+    if (!BLOCK_TAGS.has(el.tagName)) continue;
+
+    // 排除不可能是正文的标签/区域
+    if (el.closest('nav, header, footer, aside, [role="navigation"], [role="banner"], [role="complementary"]')) continue;
+
+    // 已处理或已被掰it 注入的跳过
+    if (processedElements.has(el)) continue;
+    if (isEnlearnElement(el)) continue;
+    if (el.closest(".enlearn-original-hidden")) continue;
+
+    // "叶子"判定：内部没有子块级元素
+    let hasBlockChild = false;
+    for (const child of el.children) {
+      if (BLOCK_TAGS.has(child.tagName) || SKIP_TAGS.has(child.tagName)) {
+        hasBlockChild = true;
+        break;
+      }
+    }
+    if (hasBlockChild) continue;
+
+    // 文本长度和英文检查
+    const text = el.textContent?.trim() ?? "";
+    if (text.length < 10) continue;
+    if (!isEnglish(text)) continue;
+    if (text.split(/\s+/).length < 8) continue;
+
+    results.push(el);
+  }
+
+  return results;
+}
+
 function scanPage(): void {
   if (!isActive || isPaused) return;
 
+  // 第一轮：白名单精确匹配
   const candidates = document.querySelectorAll(DOM_SELECTORS);
 
   for (const el of candidates) {
@@ -828,66 +885,80 @@ function scanPage(): void {
     // 太短的文本不值得处理（短推文、标题等）
     if (text.split(/\s+/).length < 8) continue;
 
-    // 统一扫读：按段落/句子本地拆分
-    processedElements.add(el);
-
-    // 含 URL 链接的元素 → clone + DOM 手术路径（保留 <a>）
-    const hasUrlLinks = el.querySelector('a[href^="http"]') !== null;
-    if (hasUrlLinks) {
-      processElementWithLinks(el, text);
-      continue;
-    }
-
-    // 不含链接 → 现有纯文本路径
-    const paragraphs = extractParagraphs(el);
-    const allChunkedLines: string[] = [];
-    let hasAnyChunks = false;
-
-    for (let pi = 0; pi < paragraphs.length; pi++) {
-      if (pi > 0) allChunkedLines.push(""); // 段落间空行
-
-      const sentences = splitIntoSentences(paragraphs[pi]);
-      for (const sentence of sentences) {
-        const scanResult = scanSplit(sentence, config.scanThreshold, config.chunkGranularity);
-        if (scanResult.chunks.length > 1) {
-          hasAnyChunks = true;
-          allChunkedLines.push(toChunkedString(scanResult.chunks));
-        } else {
-          allChunkedLines.push(sentence);
-        }
-      }
-    }
-
-    // 生词标注（不管是否拆分）
-    const vocabAnnotations = isLoaded()
-      ? annotateWords(text, knownWords)
-      : [];
-
-    // 收集生词列表（只要词）
-    const sentenceNewWords = vocabAnnotations.map(a => a.word);
-
-    if (hasAnyChunks) {
-      // 有本地拆分结果 → 渲染（带生词标注）
-      const chunkedString = allChunkedLines.join("\n");
-      const chunkResult: ChunkResult = {
-        original: text,
-        chunked: chunkedString,
-        isSimple: false,
-        newWords: toNewWordsFormat(vocabAnnotations),
-      };
-      const chunkedEl = createChunkedElement(chunkResult, config.chunkIntensity);
-      if (chunkedEl) {
-        copyFontStyles(el, chunkedEl);
-        insertChunkedElement(el, chunkedEl);
-      }
-    } else {
-      // 没拆开 → 保留原始 DOM，只在原始元素上挂手动触发
-      addManualTrigger(el, text);
-    }
-
-    // fire-and-forget 存句到 pending_sentences
-    saveSentenceQuiet(text, false, sentenceNewWords);
+    processTextElement(el, text);
   }
+
+  // 第二轮：兜底扫描——找白名单没覆盖到的文本密集叶子元素
+  // 兜底元素可能直接参与 flex/grid 布局（如 col-md-6），
+  // 必须用 clone 路径保留原始 class，否则兄弟插入会破坏布局
+  const fallbackCandidates = findTextLeafElements();
+  for (const el of fallbackCandidates) {
+    const text = el.textContent?.trim() ?? "";
+    processedElements.add(el);
+    processElementWithLinks(el, text);
+  }
+}
+
+/** 处理单个文本元素：拆分 + 生词标注 + DOM 注入 */
+function processTextElement(el: Element, text: string): void {
+  processedElements.add(el);
+
+  // 含 URL 链接的元素 → clone + DOM 手术路径（保留 <a>）
+  const hasUrlLinks = el.querySelector('a[href^="http"]') !== null;
+  if (hasUrlLinks) {
+    processElementWithLinks(el, text);
+    return;
+  }
+
+  // 不含链接 → 现有纯文本路径
+  const paragraphs = extractParagraphs(el);
+  const allChunkedLines: string[] = [];
+  let hasAnyChunks = false;
+
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    if (pi > 0) allChunkedLines.push(""); // 段落间空行
+
+    const sentences = splitIntoSentences(paragraphs[pi]);
+    for (const sentence of sentences) {
+      const scanResult = scanSplit(sentence, config.scanThreshold, config.chunkGranularity);
+      if (scanResult.chunks.length > 1) {
+        hasAnyChunks = true;
+        allChunkedLines.push(toChunkedString(scanResult.chunks));
+      } else {
+        allChunkedLines.push(sentence);
+      }
+    }
+  }
+
+  // 生词标注（不管是否拆分）
+  const vocabAnnotations = isLoaded()
+    ? annotateWords(text, knownWords)
+    : [];
+
+  // 收集生词列表（只要词）
+  const sentenceNewWords = vocabAnnotations.map(a => a.word);
+
+  if (hasAnyChunks) {
+    // 有本地拆分结果 → 渲染（带生词标注）
+    const chunkedString = allChunkedLines.join("\n");
+    const chunkResult: ChunkResult = {
+      original: text,
+      chunked: chunkedString,
+      isSimple: false,
+      newWords: toNewWordsFormat(vocabAnnotations),
+    };
+    const chunkedEl = createChunkedElement(chunkResult, config.chunkIntensity);
+    if (chunkedEl) {
+      copyFontStyles(el, chunkedEl);
+      insertChunkedElement(el, chunkedEl);
+    }
+  } else {
+    // 没拆开 → 保留原始 DOM，只在原始元素上挂手动触发
+    addManualTrigger(el, text);
+  }
+
+  // fire-and-forget 存句到 pending_sentences
+  saveSentenceQuiet(text, false, sentenceNewWords);
 }
 
 function isEnlearnElement(el: Element): boolean {
