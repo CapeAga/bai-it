@@ -809,7 +809,11 @@ const DOM_SELECTORS = [
 // 块级标签集合，用于判断"叶子文本块"
 const BLOCK_TAGS = new Set([
   "DIV", "P", "LI", "BLOCKQUOTE", "TD", "TH",
-  "SECTION", "ARTICLE", "MAIN", "DD", "DT", "FIGCAPTION",
+  "SECTION", "ARTICLE", "ASIDE", "MAIN", "DD", "DT", "FIGCAPTION",
+  "OL", "UL", "DL",
+  "H1", "H2", "H3", "H4", "H5", "H6",
+  "PRE", "HR", "TABLE", "FIGURE", "DETAILS", "SUMMARY",
+  "FORM", "FIELDSET",
 ]);
 
 // 兜底扫描排除的标签
@@ -1278,6 +1282,7 @@ function setupMutationObserver(): void {
   mutationObserver.observe(document.body, {
     childList: true,
     subtree: true,
+    characterData: true,
   });
 }
 
