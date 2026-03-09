@@ -1,11 +1,12 @@
 import { useState, useCallback } from "react";
 import type { ProviderKey, LLMMultiConfig } from "../../shared/types.ts";
-import { DEFAULT_PROVIDERS, PROVIDER_META, resolveLLMConfig } from "../../shared/types.ts";
+import { DEFAULT_PROVIDERS, resolveLLMConfig } from "../../shared/types.ts";
+
 import { chunkSentences } from "../../shared/llm-adapter.ts";
 import { GlassCard } from "../components/GlassCard.tsx";
 import { PROVIDER_INFO } from "../constants.ts";
 
-const PROVIDER_KEYS: ProviderKey[] = ["gemini", "chatgpt", "deepseek", "qwen", "kimi"];
+const PROVIDER_KEYS: ProviderKey[] = ["gemini", "chatgpt", "deepseek", "qwen", "kimi", "custom"];
 
 const TEST_SENTENCE = "Although the project had been delayed by several unexpected issues, the team managed to deliver a working prototype on time.";
 
@@ -18,7 +19,7 @@ interface SettingsProps {
 export function Settings({ config, configLoading: loading, updateLLM }: SettingsProps) {
   const [activeProvider, setActiveProvider] = useState<ProviderKey>("gemini");
   const [verifyStatus, setVerifyStatus] = useState<Record<ProviderKey, "idle" | "checking" | "ok" | "error">>({
-    gemini: "idle", chatgpt: "idle", deepseek: "idle", qwen: "idle", kimi: "idle",
+    gemini: "idle", chatgpt: "idle", deepseek: "idle", qwen: "idle", kimi: "idle", custom: "idle",
   });
   const [verifyError, setVerifyError] = useState<string>("");
 
@@ -45,6 +46,13 @@ export function Settings({ config, configLoading: loading, updateLLM }: Settings
   const handleModelChange = useCallback((value: string) => {
     const providers = { ...config.llm.providers };
     providers[activeProvider] = { ...providers[activeProvider], model: value };
+    updateLLM({ providers });
+    setVerifyStatus((prev) => ({ ...prev, [activeProvider]: "idle" }));
+  }, [activeProvider, config.llm.providers, updateLLM]);
+
+  const handleBaseUrlChange = useCallback((value: string) => {
+    const providers = { ...config.llm.providers };
+    providers[activeProvider] = { ...providers[activeProvider], baseUrl: value };
     updateLLM({ providers });
     setVerifyStatus((prev) => ({ ...prev, [activeProvider]: "idle" }));
   }, [activeProvider, config.llm.providers, updateLLM]);
@@ -91,6 +99,8 @@ export function Settings({ config, configLoading: loading, updateLLM }: Settings
   const currentProviderConfig = config.llm.providers[activeProvider] ?? DEFAULT_PROVIDERS[activeProvider];
   const providerInfo = PROVIDER_INFO[activeProvider];
   const status = verifyStatus[activeProvider];
+  const isCustom = activeProvider === "custom";
+  const baseUrlValue = currentProviderConfig.baseUrl ?? "";
 
   return (
     <div className="settings-section rv">
@@ -141,17 +151,44 @@ export function Settings({ config, configLoading: loading, updateLLM }: Settings
           <div>
             <div className="settings-label">模型</div>
           </div>
-          <select
-            className="settings-select"
-            value={currentProviderConfig.model}
-            onChange={(e) => handleModelChange(e.target.value)}
-            style={{ minWidth: 180 }}
-          >
-            {providerInfo.models.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
+          {isCustom ? (
+            <input
+              className="settings-input"
+              type="text"
+              value={currentProviderConfig.model}
+              onChange={(e) => handleModelChange(e.target.value)}
+              placeholder="例如：gpt-4o、claude-3-5-sonnet"
+              style={{ width: 240 }}
+            />
+          ) : (
+            <select
+              className="settings-select"
+              value={currentProviderConfig.model}
+              onChange={(e) => handleModelChange(e.target.value)}
+              style={{ minWidth: 180 }}
+            >
+              {providerInfo.models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          )}
         </div>
+        {isCustom && (
+          <div className="settings-row" style={{ paddingTop: 4 }}>
+            <div>
+              <div className="settings-label">Base URL</div>
+              <div className="settings-desc">API 服务器地址（OpenAI 兼容格式）</div>
+            </div>
+            <input
+              className="settings-input"
+              type="text"
+              value={baseUrlValue}
+              onChange={(e) => handleBaseUrlChange(e.target.value)}
+              placeholder="https://api.example.com"
+              style={{ width: 240 }}
+            />
+          </div>
+        )}
         <div className="settings-model-info">{providerInfo.hint}</div>
       </GlassCard>
     </div>

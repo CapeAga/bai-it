@@ -178,8 +178,9 @@ export function parseOpenAIResponse(data: unknown): LLMChunkItem[] {
  * 兼容 markdown fence 包裹和直接 JSON
  */
 export function parseChunkJson(text: string): LLMChunkItem[] {
+  // 剥离 <think>...</think> 推理块（DeepSeek-R1 / MiniMax-M2.5 等 thinking 模型）
+  let cleaned = text.trim().replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   // 去除可能的 markdown fence
-  let cleaned = text.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch) {
     cleaned = fenceMatch[1].trim();
@@ -348,7 +349,7 @@ Return valid JSON only, no markdown fences.`;
  * 解析单条完整分析结果 JSON
  */
 export function parseFullAnalysisJson(text: string): FullAnalysisResult {
-  let cleaned = text.trim();
+  let cleaned = text.trim().replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch) {
     cleaned = fenceMatch[1].trim();

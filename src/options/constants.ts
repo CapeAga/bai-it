@@ -30,6 +30,11 @@ export const PROVIDER_INFO: Record<
     models: ["kimi-k2.5", "moonshot-v1-8k"],
     hint: "K2.5 是当前主力模型。moonshot-v1 是旧版。",
   },
+  custom: {
+    label: "自定义",
+    models: [],
+    hint: "填入任意 OpenAI 兼容接口的 Base URL、API Key 和模型名称。",
+  },
 };
 
 /** 句式 key → 中文名映射 */

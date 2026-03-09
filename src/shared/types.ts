@@ -8,13 +8,14 @@ export interface LLMConfig {
   model: string;
 }
 
-/** 5 种 Provider */
-export type ProviderKey = "gemini" | "chatgpt" | "deepseek" | "qwen" | "kimi";
+/** 6 种 Provider（含自定义） */
+export type ProviderKey = "gemini" | "chatgpt" | "deepseek" | "qwen" | "kimi" | "custom";
 
 /** 单个 Provider 的存储数据 */
 export interface ProviderConfig {
   apiKey: string;
   model: string;
+  baseUrl?: string; // 自定义 base URL，为空时使用 PROVIDER_META 默认值
 }
 
 /** 多 Provider 存储结构 */
@@ -40,6 +41,7 @@ export const DEFAULT_PROVIDERS: Record<ProviderKey, ProviderConfig> = {
   deepseek: { apiKey: "", model: "deepseek-chat" },
   qwen: { apiKey: "", model: "qwen3-flash" },
   kimi: { apiKey: "", model: "kimi-k2.5" },
+  custom: { apiKey: "", model: "", baseUrl: "" },
 };
 
 export const DEFAULT_CONFIG: BaitConfig = {
@@ -61,6 +63,7 @@ export const PROVIDER_META: Record<ProviderKey, { format: LLMConfig["format"]; b
   deepseek: { format: "openai-compatible", baseUrl: "https://api.deepseek.com", label: "DeepSeek" },
   qwen: { format: "openai-compatible", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode", label: "Qwen" },
   kimi: { format: "openai-compatible", baseUrl: "https://api.moonshot.cn", label: "Kimi" },
+  custom: { format: "openai-compatible", baseUrl: "", label: "自定义" },
 };
 
 /** 从多 Provider 配置中解析出 LLMConfig（给 llm-adapter 用） */
@@ -71,7 +74,7 @@ export function resolveLLMConfig(multi: LLMMultiConfig): LLMConfig {
   return {
     format: meta.format,
     apiKey: pc.apiKey,
-    baseUrl: meta.baseUrl,
+    baseUrl: pc.baseUrl !== undefined && pc.baseUrl !== "" ? pc.baseUrl : meta.baseUrl,
     model: pc.model,
   };
 }
