@@ -350,4 +350,44 @@ body.enlearn-paused .enlearn-original-hidden { display: block !important; }
   color: #f87171;
   font-size: 13px;
 }
+
+/* 关闭按钮（用于翻译结果、错误信息等持久悬浮框） */
+.enlearn-tooltip-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 50%;
+  color: rgba(255,255,255,0.4);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.enlearn-tooltip-close:hover {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #f87171;
+}
+
+/* 错误结果容器 */
+.enlearn-error-result {
+  position: relative;
+  padding-right: 28px;
+}
+
+/* 翻译结果和单词详情容器需要相对定位以放置关闭按钮 */
+.enlearn-translation-result,
+.enlearn-word-detail {
+  position: relative;
+  padding-right: 28px;
+}
 `;

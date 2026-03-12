@@ -44,6 +44,7 @@ let tooltipEl: HTMLElement | null = null;
 
 let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
 let currentTooltipWord: string | null = null;
+let isTooltipPersistent = false; // 持久模式：翻译结果不自动隐藏
 
 function setupTooltip(): void {
   if (tooltipEl) return;
@@ -51,11 +52,13 @@ function setupTooltip(): void {
   tooltipEl.className = "enlearn-tooltip";
   document.body.appendChild(tooltipEl);
 
-  // Keep tooltip visible when hovering the tooltip itself
+  // Keep tooltip visible when hovering the tooltip itself (非持久模式下)
   tooltipEl.addEventListener("mouseenter", () => {
+    if (isTooltipPersistent) return; // 持久模式不处理
     if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
   });
   tooltipEl.addEventListener("mouseleave", () => {
+    if (isTooltipPersistent) return; // 持久模式不自动隐藏
     scheduleHideTooltip();
   });
   tooltipEl.addEventListener("click", onTooltipClick);
@@ -76,6 +79,15 @@ function scheduleHideTooltip(): void {
 }
 
 async function onTooltipClick(e: MouseEvent): Promise<void> {
+  // 处理关闭按钮
+  const closeBtn = (e.target as Element).closest?.(".enlearn-tooltip-close");
+  if (closeBtn && tooltipEl) {
+    tooltipEl.style.display = "none";
+    isTooltipPersistent = false;
+    currentTooltipWord = null;
+    return;
+  }
+
   const btn = (e.target as Element).closest?.(".enlearn-tooltip-btn");
   if (!btn || !currentTooltipWord) return;
 
@@ -97,6 +109,7 @@ async function onTooltipClick(e: MouseEvent): Promise<void> {
 
   // Hide tooltip
   if (tooltipEl) tooltipEl.style.display = "none";
+  isTooltipPersistent = false;
   currentTooltipWord = null;
 }
 
@@ -263,7 +276,7 @@ async function handleShowTranslationTooltip(text: string): Promise<void> {
       };
 
       if (result.error) {
-        tooltipEl.innerHTML = `<span class="enlearn-tooltip-error">${escapeHtml(result.error)}</span>`;
+        displayErrorResult(result.error);
         return;
       }
 
@@ -279,7 +292,7 @@ async function handleShowTranslationTooltip(text: string): Promise<void> {
       };
 
       if (result.error) {
-        tooltipEl.innerHTML = `<span class="enlearn-tooltip-error">${escapeHtml(result.error)}</span>`;
+        displayErrorResult(result.error);
         return;
       }
 
@@ -289,7 +302,7 @@ async function handleShowTranslationTooltip(text: string): Promise<void> {
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "翻译失败";
-    tooltipEl.innerHTML = `<span class="enlearn-tooltip-error">${escapeHtml(errMsg)}</span>`;
+    displayErrorResult(errMsg);
   }
 }
 
@@ -303,10 +316,14 @@ function displayWordDetailResult(
 ): void {
   if (!tooltipEl) return;
 
-  // Cancel any pending hide
+  // 设置持久模式
+  isTooltipPersistent = true;
   if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
 
   let html = `<div class="enlearn-word-detail">`;
+
+  // 关闭按钮
+  html += `<button class="enlearn-tooltip-close" title="关闭">✕</button>`;
 
   // 单词头部：词 + 音标 + 词性
   html += `<div class="enlearn-word-header">`;
@@ -356,10 +373,15 @@ function displayTranslationResult(
 ): void {
   if (!tooltipEl) return;
 
-  // Cancel any pending hide
+  // 设置持久模式
+  isTooltipPersistent = true;
   if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
 
   let html = `<div class="enlearn-translation-result">`;
+
+  // 关闭按钮
+  html += `<button class="enlearn-tooltip-close" title="关闭">✕</button>`;
+
   html += `<div class="enlearn-translation-text">${escapeHtml(translation)}</div>`;
 
   if (keyWords && keyWords.length > 0) {
@@ -373,6 +395,37 @@ function displayTranslationResult(
   html += `</div>`;
 
   tooltipEl.innerHTML = html;
+  tooltipEl.style.display = "block";
+
+  // Position tooltip
+  const tipRect = tooltipEl.getBoundingClientRect();
+  let left = window.innerWidth / 2 - tipRect.width / 2;
+  let top = window.innerHeight / 3 - tipRect.height / 2;
+
+  if (left < 4) left = 4;
+  if (left + tipRect.width > window.innerWidth - 4) {
+    left = window.innerWidth - 4 - tipRect.width;
+  }
+  if (top < 4) top = 4;
+
+  tooltipEl.style.left = `${left}px`;
+  tooltipEl.style.top = `${top}px`;
+}
+
+/** 显示错误结果（持久模式，带关闭按钮） */
+function displayErrorResult(errorMsg: string): void {
+  if (!tooltipEl) return;
+
+  // 设置持久模式
+  isTooltipPersistent = true;
+  if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
+
+  tooltipEl.innerHTML = `
+    <div class="enlearn-error-result">
+      <button class="enlearn-tooltip-close" title="关闭">✕</button>
+      <span class="enlearn-tooltip-error">${escapeHtml(errorMsg)}</span>
+    </div>
+  `;
   tooltipEl.style.display = "block";
 
   // Position tooltip
