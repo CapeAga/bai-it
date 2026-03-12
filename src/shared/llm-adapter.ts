@@ -217,7 +217,9 @@ export function parseOpenAIResponse(data: unknown): LLMChunkItem[] {
 
 export function parseAnthropicResponse(data: unknown): LLMChunkItem[] {
   const response = data as AnthropicResponse;
-  const text = response?.content?.[0]?.text;
+  // content 数组可能包含多个块（thinking、text 等），需要找到 type === "text" 的那个
+  const textBlock = response?.content?.find(block => block.type === "text");
+  const text = textBlock?.text;
   if (!text) {
     throw new Error("Anthropic 返回了空响应");
   }
@@ -462,7 +464,9 @@ function extractResponseText(data: unknown, format: "gemini" | "openai-compatibl
     return text;
   } else if (format === "anthropic") {
     const response = data as { content?: { type: string; text?: string }[] };
-    const text = response?.content?.[0]?.text;
+    // content 数组可能包含多个块（thinking、text 等），需要找到 type === "text" 的那个
+    const textBlock = response?.content?.find(block => block.type === "text");
+    const text = textBlock?.text;
     if (!text) throw new Error("Anthropic 返回了空响应");
     return text;
   } else {

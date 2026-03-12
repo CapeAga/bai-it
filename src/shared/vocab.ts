@@ -148,7 +148,7 @@ export function isCommonWord(word: string): boolean {
 }
 
 /** 在通用词典中查找（含词形变体） */
-function lookupDictionary(word: string): string | null {
+export function lookupDictionary(word: string): string | null {
   if (!dictMap) return null;
   const candidates = getStemCandidates(word);
   for (const c of candidates) {
