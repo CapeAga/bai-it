@@ -18,6 +18,10 @@
 export interface VocabAnnotation {
   word: string;
   definition: string;
+  isFromVocabBook?: boolean; // 是否来自生词本
+  phonetic?: string;
+  pos?: string;
+  example?: string;
 }
 
 // ========== 数据存储 ==========
@@ -197,6 +201,9 @@ export function annotateWords(
       annotations.push({
         word: lower,
         definition: vocabInfo.definition || "生词本",
+        isFromVocabBook: true,
+        phonetic: vocabInfo.phonetic,
+        pos: vocabInfo.pos,
       });
       continue;
     }

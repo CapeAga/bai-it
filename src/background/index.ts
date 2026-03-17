@@ -592,6 +592,53 @@ async function handleMessage(
       }
     }
 
+    case "exportVocab": {
+      const db = await getDB();
+
+      try {
+        const records = await vocabDAO.getAll(db);
+        // 返回所有单词（包括 mastered）
+        return { words: records };
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
+    case "importVocab": {
+      const { words } = message;
+      const db = await getDB();
+
+      try {
+        let added = 0;
+        let skipped = 0;
+
+        for (const w of words) {
+          const existing = await vocabDAO.getByWord(db, w.word.toLowerCase());
+          if (existing) {
+            // 已存在，跳过（合并模式）
+            skipped++;
+          } else {
+            // 新增
+            await vocabDAO.add(db, {
+              word: w.word.toLowerCase(),
+              status: w.status || "new",
+              phonetic: w.phonetic,
+              pos: w.pos,
+              definition: w.definition,
+              example: w.example,
+            });
+            added++;
+          }
+        }
+
+        return { success: true, added, skipped };
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
     default:
       return { error: "Unknown message type" };
   }
