@@ -4,6 +4,8 @@
 
 **English too long? Break it.**
 
+🌐 Website: [bai-it.app](https://bai-it.app)
+
 掰it is a Chrome extension that breaks down long English sentences into digestible chunks and highlights vocabulary — right on the webpage you're reading.
 
 No signup, no login, no backend. Your data stays in your browser.
