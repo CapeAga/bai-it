@@ -440,4 +440,59 @@ body.enlearn-paused .enlearn-original-hidden { display: block !important; }
   position: relative;
   padding-right: 28px;
 }
+
+/* ========== 悬浮图标 ========== */
+
+.enlearn-floating-icon {
+  position: fixed;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
+  cursor: pointer;
+  z-index: 2147483647;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  user-select: none;
+  pointer-events: auto;
+}
+
+.enlearn-floating-icon-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.enlearn-floating-icon:hover {
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.5);
+  transform: scale(1.1);
+}
+
+.enlearn-floating-icon:active {
+  transform: scale(0.95);
+}
+
+.enlearn-floating-icon-logo {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1;
+}
+
+/* 暗色模式适配 */
+@media (prefers-color-scheme: dark) {
+  .enlearn-floating-icon {
+    background: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+    box-shadow: 0 2px 8px rgba(129, 140, 248, 0.4);
+  }
+
+  .enlearn-floating-icon:hover {
+    box-shadow: 0 4px 12px rgba(129, 140, 248, 0.55);
+  }
+}
 `;

@@ -7,15 +7,16 @@ import { Dashboard } from "./tabs/Dashboard.tsx";
 import { DailyReview } from "./tabs/DailyReview.tsx";
 import { Sentences } from "./tabs/Sentences.tsx";
 import { Settings } from "./tabs/Settings.tsx";
+import { Vocabulary } from "./tabs/Vocabulary.tsx";
 import { useDB } from "./hooks/useDB.ts";
 import { useConfig } from "./hooks/useConfig.ts";
 import { useOnboardingState } from "./hooks/useOnboardingState.ts";
 import { MasteredWordsContext, useMasteredWordsProvider } from "./hooks/useMasteredWords.ts";
 import type { BaitConfig } from "../shared/types.ts";
 
-export type TabKey = "dashboard" | "review" | "sentences" | "settings";
+export type TabKey = "dashboard" | "review" | "sentences" | "vocabulary" | "settings";
 
-const TABS: TabKey[] = ["dashboard", "review", "sentences", "settings"];
+const TABS: TabKey[] = ["dashboard", "review", "sentences", "vocabulary", "settings"];
 
 function getTabFromHash(): TabKey {
   const hash = window.location.hash.slice(1);
@@ -138,6 +139,9 @@ export function App() {
             </div>
             <div className={`tab-panel ${activeTab === "sentences" ? "active" : ""}`}>
               {activeTab === "sentences" && <Sentences key={tabKey} db={db} isExample={sentencesIsExample} />}
+            </div>
+            <div className={`tab-panel ${activeTab === "vocabulary" ? "active" : ""}`}>
+              {activeTab === "vocabulary" && <Vocabulary key={tabKey} db={db} />}
             </div>
             <div className={`tab-panel ${activeTab === "settings" ? "active" : ""}`}>
               {activeTab === "settings" && (

@@ -223,7 +223,9 @@ export type Message =
   | { type: "addToVocab"; word: string; phonetic?: string; pos?: string; definition: string; example?: string }
   | { type: "removeFromVocab"; word: string }
   | { type: "checkVocab"; word: string }
-  | { type: "getVocabWords" };
+  | { type: "getVocabWords" }
+  | { type: "exportVocab" }
+  | { type: "importVocab"; words: Array<{ word: string; phonetic?: string; pos?: string; definition?: string; example?: string; status?: VocabStatus }> };
 
 export type BackgroundMessage =
   | { type: "activate" }
@@ -306,7 +308,9 @@ export interface VocabRecord {
   word: string;
   status: VocabStatus;
   phonetic?: string;
+  pos?: string; // 词性：n./v./adj./adv.
   definition?: string; // 释义（含行业义项）
+  example?: string; // 例句
   encounter_count: number; // 遭遇次数
   first_seen_at: number;
   mastered_at?: number;

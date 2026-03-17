@@ -47,6 +47,10 @@ let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
 let currentTooltipWord: string | null = null;
 let isTooltipPersistent = false; // 持久模式：翻译结果不自动隐藏
 
+// ========== 悬浮图标 ==========
+
+let floatingIconEl: HTMLElement | null = null;
+
 function setupTooltip(): void {
   if (tooltipEl) return;
   tooltipEl = document.createElement("div");
@@ -68,6 +72,105 @@ function setupTooltip(): void {
   document.addEventListener("mouseout", onWordLeave);
   document.addEventListener("mouseover", onTriggerParentHover);
   document.addEventListener("mouseout", onTriggerParentLeave);
+}
+
+// ========== 悬浮图标 ==========
+
+function setupFloatingIcon(): void {
+  if (floatingIconEl) return;
+  floatingIconEl = document.createElement("div");
+  floatingIconEl.className = "enlearn-floating-icon";
+  floatingIconEl.innerHTML = `<span class="enlearn-floating-icon-logo">掰</span>`;
+  floatingIconEl.title = "翻译选中内容";
+  floatingIconEl.style.display = "none";
+  document.body.appendChild(floatingIconEl);
+
+  floatingIconEl.addEventListener("click", onFloatingIconClick);
+}
+
+function showFloatingIcon(x: number, y: number): void {
+  if (!floatingIconEl) return;
+
+  floatingIconEl.style.left = `${x}px`;
+  floatingIconEl.style.top = `${y}px`;
+  floatingIconEl.style.display = "flex";
+  floatingIconEl.classList.add("enlearn-floating-icon-visible");
+}
+
+function hideFloatingIcon(): void {
+  if (!floatingIconEl) return;
+  floatingIconEl.classList.remove("enlearn-floating-icon-visible");
+  floatingIconEl.style.display = "none";
+}
+
+function onMouseUp(e: MouseEvent): void {
+  // 忽略在 tooltip 或悬浮图标上的点击
+  if ((e.target as Element).closest?.(".enlearn-tooltip, .enlearn-floating-icon")) {
+    return;
+  }
+
+  // 延迟处理，确保 selection 已更新
+  setTimeout(() => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+      hideFloatingIcon();
+      return;
+    }
+
+    const text = selection.toString().trim();
+
+    // 检查是否是英文文本
+    if (!text || !isEnglish(text)) {
+      hideFloatingIcon();
+      return;
+    }
+
+    // 获取选区范围
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+
+    // 在选区右上角显示图标
+    const iconSize = 24;
+    const padding = 4;
+    const x = rect.right - iconSize - padding;
+    const y = rect.top - iconSize - padding;
+
+    // 确保不超出屏幕
+    const finalX = Math.max(4, Math.min(x, window.innerWidth - iconSize - 4));
+    const finalY = Math.max(4, Math.min(y, window.innerHeight - iconSize - 4));
+
+    showFloatingIcon(finalX, finalY);
+  }, 10);
+}
+
+function onDocumentClick(e: MouseEvent): void {
+  // 点击不在悬浮图标上的位置时隐藏
+  if (!(e.target as Element).closest?.(".enlearn-floating-icon")) {
+    hideFloatingIcon();
+  }
+}
+
+async function onFloatingIconClick(e: MouseEvent): Promise<void> {
+  e.preventDefault();
+  e.stopPropagation();
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) {
+    hideFloatingIcon();
+    return;
+  }
+
+  const text = selection.toString().trim();
+  if (!text) {
+    hideFloatingIcon();
+    return;
+  }
+
+  // 隐藏悬浮图标
+  hideFloatingIcon();
+
+  // 触发翻译（复用右键菜单的翻译逻辑）
+  handleShowTranslationTooltip(text);
 }
 
 function scheduleHideTooltip(): void {
@@ -107,6 +210,25 @@ async function onTooltipClick(e: MouseEvent): Promise<void> {
           vocabBtn.classList.remove("enlearn-vocab-btn-active");
           vocabBtn.textContent = "☆";
           vocabBtn.title = "添加到生词本";
+          // 更新页面上该单词的高亮样式：移除生词本高亮
+          document.querySelectorAll(`.enlearn-vocab-word`).forEach(el => {
+            if ((el as HTMLElement).dataset.word?.toLowerCase() === word) {
+              // 移除生词本特有的样式和属性
+              el.classList.remove("enlearn-vocab-word");
+              el.removeAttribute("data-phonetic");
+              el.removeAttribute("data-pos");
+              // 检查是否在词典中，如果不在则完全移除高亮
+              const def = (el as HTMLElement).dataset.def;
+              if (!def || def === "生词本") {
+                // 不在词典中，完全移除高亮
+                const text = document.createTextNode(el.textContent || "");
+                el.parentNode?.replaceChild(text, el);
+              } else {
+                // 在词典中，改为普通生词样式
+                el.classList.add("enlearn-word");
+              }
+            }
+          });
         }
       } catch {
         // 静默失败
@@ -141,6 +263,20 @@ async function onTooltipClick(e: MouseEvent): Promise<void> {
           vocabBtn.classList.add("enlearn-vocab-btn-active");
           vocabBtn.textContent = "★";
           vocabBtn.title = "从生词本移除";
+          // 更新页面上该单词的高亮样式：从普通样式改为生词本样式
+          document.querySelectorAll(`.enlearn-word`).forEach(el => {
+            if ((el as HTMLElement).dataset.word?.toLowerCase() === word) {
+              el.classList.remove("enlearn-word");
+              el.classList.add("enlearn-vocab-word");
+              // 添加生词本特有的属性
+              if (phonetic) {
+                (el as HTMLElement).setAttribute("data-phonetic", phonetic);
+              }
+              if (pos) {
+                (el as HTMLElement).setAttribute("data-pos", pos);
+              }
+            }
+          });
         }
       } catch {
         // 静默失败
@@ -161,7 +297,7 @@ async function onTooltipClick(e: MouseEvent): Promise<void> {
   } catch { /* silent */ }
 
   // Remove all annotations for this word on current page
-  document.querySelectorAll(`.enlearn-word`).forEach(el => {
+  document.querySelectorAll(`.enlearn-word, .enlearn-vocab-word`).forEach(el => {
     if ((el as HTMLElement).dataset.word?.toLowerCase() === word) {
       const text = document.createTextNode(el.textContent || "");
       el.parentNode?.replaceChild(text, el);
@@ -175,7 +311,8 @@ async function onTooltipClick(e: MouseEvent): Promise<void> {
 }
 
 function onWordHover(e: MouseEvent): void {
-  const wordEl = (e.target as Element).closest?.(".enlearn-word") as HTMLElement | null;
+  // 同时处理普通生词和生词本单词
+  const wordEl = (e.target as Element).closest?.(".enlearn-word, .enlearn-vocab-word") as HTMLElement | null;
   if (!wordEl || !tooltipEl) return;
 
   const def = wordEl.getAttribute("data-def");
@@ -184,9 +321,51 @@ function onWordHover(e: MouseEvent): void {
   // Cancel any pending hide
   if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
 
-  currentTooltipWord = (wordEl.dataset.word || wordEl.textContent || "").toLowerCase();
-  tooltipEl.innerHTML = `<span class="enlearn-tooltip-def">${escapeHtml(def)}</span><button class="enlearn-tooltip-btn" title="标记为已掌握">✓</button>`;
-  tooltipEl.style.display = "flex";
+  const word = (wordEl.dataset.word || wordEl.textContent || "").toLowerCase();
+  currentTooltipWord = word;
+
+  // 检查是否是生词本单词
+  const isVocabWord = wordEl.classList.contains("enlearn-vocab-word");
+
+  if (isVocabWord) {
+    // 生词本单词：显示完整信息
+    const phonetic = wordEl.getAttribute("data-phonetic");
+    const pos = wordEl.getAttribute("data-pos");
+    const inVocabBook = vocabBookWords.has(word);
+
+    let html = `<div class="enlearn-word-detail">`;
+
+    // 关闭按钮
+    html += `<button class="enlearn-tooltip-close" title="关闭">✕</button>`;
+
+    // 单词头部：词 + 音标 + 词性 + 生词本按钮
+    html += `<div class="enlearn-word-header">`;
+    html += `<span class="enlearn-word-title">${escapeHtml(word)}</span>`;
+    if (phonetic) {
+      html += `<span class="enlearn-word-phonetic">${escapeHtml(phonetic)}</span>`;
+    }
+    if (pos) {
+      html += `<span class="enlearn-word-pos">${escapeHtml(pos)}</span>`;
+    }
+    // 生词本按钮
+    const vocabBtnClass = inVocabBook ? "enlearn-vocab-btn enlearn-vocab-btn-active" : "enlearn-vocab-btn";
+    const vocabBtnTitle = inVocabBook ? "从生词本移除" : "添加到生词本";
+    const vocabBtnIcon = inVocabBook ? "★" : "☆";
+    html += `<button class="${vocabBtnClass}" title="${vocabBtnTitle}" data-word="${escapeHtml(word)}">${vocabBtnIcon}</button>`;
+    html += `</div>`;
+
+    // 释义
+    html += `<div class="enlearn-word-definition">${escapeHtml(def)}</div>`;
+
+    html += `</div>`;
+
+    tooltipEl.innerHTML = html;
+    tooltipEl.style.display = "block";
+  } else {
+    // 普通生词：显示简单释义 + 已掌握按钮
+    tooltipEl.innerHTML = `<span class="enlearn-tooltip-def">${escapeHtml(def)}</span><button class="enlearn-tooltip-btn" title="标记为已掌握">✓</button>`;
+    tooltipEl.style.display = "flex";
+  }
 
   const wordRect = wordEl.getBoundingClientRect();
   const tipRect = tooltipEl.getBoundingClientRect();
@@ -207,7 +386,7 @@ function onWordHover(e: MouseEvent): void {
 }
 
 function onWordLeave(e: MouseEvent): void {
-  const word = (e.target as Element).closest?.(".enlearn-word");
+  const word = (e.target as Element).closest?.(".enlearn-word, .enlearn-vocab-word");
   if (!word || !tooltipEl) return;
   scheduleHideTooltip();
 }
@@ -542,6 +721,11 @@ async function init(): Promise<void> {
   document.head.appendChild(style);
 
   setupTooltip();
+  setupFloatingIcon();
+
+  // 悬浮图标事件监听
+  document.addEventListener("mouseup", onMouseUp);
+  document.addEventListener("click", onDocumentClick);
 
   // 加载词汇数据
   loadFrequencyList(wordFrequency as string[]);
@@ -1136,10 +1320,10 @@ function processElementWithLinks(el: Element, text: string): void {
  */
 function applyVocabToClone(
   clone: HTMLElement,
-  annotations: { word: string; definition: string }[]
+  annotations: { word: string; definition: string; isFromVocabBook?: boolean; phonetic?: string; pos?: string }[]
 ): void {
   const wordMap = new Map(
-    annotations.map(a => [a.word.toLowerCase(), a.definition])
+    annotations.map(a => [a.word.toLowerCase(), a])
   );
   const wordPattern = annotations
     .map(a => a.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
@@ -1183,10 +1367,29 @@ function applyVocabToClone(
       // wordNode 现在只包含匹配的词
 
       const span = document.createElement("span");
-      span.className = "enlearn-word";
-      const def = wordMap.get(m.word.toLowerCase()) || "";
+      const annotation = wordMap.get(m.word.toLowerCase());
+
+      // 生词本单词使用特殊的高亮样式
+      if (annotation?.isFromVocabBook) {
+        span.className = "enlearn-vocab-word";
+      } else {
+        span.className = "enlearn-word";
+      }
+
+      const def = annotation?.definition || "";
       span.setAttribute("data-def", def);
       span.setAttribute("data-word", m.word.toLowerCase());
+
+      // 生词本单词添加额外属性
+      if (annotation?.isFromVocabBook) {
+        if (annotation.phonetic) {
+          span.setAttribute("data-phonetic", annotation.phonetic);
+        }
+        if (annotation.pos) {
+          span.setAttribute("data-pos", annotation.pos);
+        }
+      }
+
       span.textContent = wordNode.textContent;
 
       wordNode.parentNode!.replaceChild(span, wordNode);
@@ -1371,7 +1574,7 @@ function processTextElement(el: Element, text: string): void {
       isSimple: false,
       newWords: toNewWordsFormat(vocabAnnotations),
     };
-    const chunkedEl = createChunkedElement(chunkResult, config.chunkIntensity, new Set(vocabBookWords.keys()));
+    const chunkedEl = createChunkedElement(chunkResult, config.chunkIntensity, vocabBookWords);
     if (chunkedEl) {
       copyFontStyles(el, chunkedEl);
       insertChunkedElement(el, chunkedEl);
@@ -1442,7 +1645,7 @@ function addManualTrigger(el: Element, text: string): void {
       }
 
       if (result) {
-        const chunkedEl = createChunkedElement(result, config.chunkIntensity);
+        const chunkedEl = createChunkedElement(result, config.chunkIntensity, vocabBookWords);
         if (chunkedEl) {
           copyFontStyles(el, chunkedEl);
           insertChunkedElement(el, chunkedEl);
@@ -1536,7 +1739,7 @@ async function flushProcessQueue(): Promise<void> {
           continue;
         }
 
-        const chunkedEl = createChunkedElement(result, config.chunkIntensity);
+        const chunkedEl = createChunkedElement(result, config.chunkIntensity, vocabBookWords);
         if (!chunkedEl) continue;
 
         copyFontStyles(el, chunkedEl);
