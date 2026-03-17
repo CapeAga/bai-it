@@ -4,6 +4,7 @@
  * 词汇源：
  * 1. 通用离线词典（ECDICT 31K 词条）— 基础释义
  * 2. LLM 语境化释义 — 仅在调 LLM 时获得
+ * 3. 生词本 — 用户手动添加的单词
  *
  * 过滤规则：
  * - 常用词（ECDICT BNC/FRQ ≤ 5000）不标注
@@ -17,6 +18,10 @@
 export interface VocabAnnotation {
   word: string;
   definition: string;
+  isFromVocabBook?: boolean; // 是否来自生词本
+  phonetic?: string;
+  pos?: string;
+  example?: string;
 }
 
 // ========== 数据存储 ==========
@@ -148,7 +153,7 @@ export function isCommonWord(word: string): boolean {
 }
 
 /** 在通用词典中查找（含词形变体） */
-function lookupDictionary(word: string): string | null {
+export function lookupDictionary(word: string): string | null {
   if (!dictMap) return null;
   const candidates = getStemCandidates(word);
   for (const c of candidates) {
@@ -162,11 +167,13 @@ function lookupDictionary(word: string): string | null {
  *
  * @param text 要标注的文本
  * @param knownWords 用户已掌握的词（Set<lowercase word>）
+ * @param vocabBookWords 生词本中的单词及其释义（Map<lowercase word, definition>）
  * @returns 需要标注的生词及释义
  */
 export function annotateWords(
   text: string,
   knownWords: Set<string>,
+  vocabBookWords?: Map<string, { phonetic?: string; pos?: string; definition?: string }>,
 ): VocabAnnotation[] {
   if (!frequencySet || !dictMap) return [];
 
@@ -186,8 +193,23 @@ export function annotateWords(
 
     // 跳过条件
     if (shouldSkipWord(word)) continue;
-    if (isCommonWord(word)) continue;
     if (knownWords.has(lower)) continue;
+
+    // 生词本中的单词优先标注（即使常用词也标注）
+    if (vocabBookWords?.has(lower)) {
+      const vocabInfo = vocabBookWords.get(lower)!;
+      annotations.push({
+        word: lower,
+        definition: vocabInfo.definition || "生词本",
+        isFromVocabBook: true,
+        phonetic: vocabInfo.phonetic,
+        pos: vocabInfo.pos,
+      });
+      continue;
+    }
+
+    // 常用词跳过
+    if (isCommonWord(word)) continue;
 
     // 在词典中查找释义
     const dictDef = lookupDictionary(word);

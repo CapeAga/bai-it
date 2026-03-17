@@ -21,12 +21,14 @@ import type {
   ReviewItemRecord,
   WallpaperRecord,
   PendingSentenceRecord,
+  TranslationCacheRecord,
+  WordDetailCacheRecord,
 } from "./types.ts";
 
 // ========== 常量 ==========
 
 export const DB_NAME = "openen-data";
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export const STORES = {
   vocab: "vocab",
@@ -39,6 +41,8 @@ export const STORES = {
   review_items: "review_items",
   wallpaper_records: "wallpaper_records",
   pending_sentences: "pending_sentences",
+  translation_cache: "translation_cache",
+  word_detail_cache: "word_detail_cache",
 } as const;
 
 export type StoreName = (typeof STORES)[keyof typeof STORES];
@@ -110,6 +114,9 @@ function migrateSchema(db: IDBDatabase, oldVersion: number, transaction: IDBTran
   if (oldVersion < 2) {
     migrateV2(db, transaction);
   }
+  if (oldVersion < 3) {
+    migrateV3(db, transaction);
+  }
 }
 
 function migrateV1(db: IDBDatabase): void {
@@ -176,6 +183,20 @@ function migrateV2(db: IDBDatabase, transaction: IDBTransaction): void {
   // 给已有的 learning_records 加 by_sentence 索引
   const lrStore = transaction.objectStore(STORES.learning_records);
   lrStore.createIndex("by_sentence", "sentence");
+}
+
+function migrateV3(db: IDBDatabase, transaction: IDBTransaction): void {
+  // translation_cache - 翻译缓存
+  const tc = db.createObjectStore(STORES.translation_cache, { keyPath: "id" });
+  tc.createIndex("by_text", "text");
+  tc.createIndex("by_targetLanguage", "targetLanguage");
+  tc.createIndex("by_created_at", "created_at");
+
+  // word_detail_cache - 单词详情缓存
+  const wdc = db.createObjectStore(STORES.word_detail_cache, { keyPath: "id" });
+  wdc.createIndex("by_word", "word");
+  wdc.createIndex("by_targetLanguage", "targetLanguage");
+  wdc.createIndex("by_created_at", "created_at");
 }
 
 // ========== 通用 CRUD 工具 ==========
@@ -771,5 +792,85 @@ export const pendingSentenceDAO = {
 
   async delete(db: IDBDatabase, id: string): Promise<void> {
     await del(db, STORES.pending_sentences, id);
+  },
+};
+
+// ========== TranslationCache ==========
+
+/** 生成翻译缓存 ID */
+export function makeTranslationCacheId(text: string, targetLanguage: string): string {
+  // 简单 hash
+  const str = `${text}:${targetLanguage}`;
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return `tc_${Math.abs(hash).toString(36)}`;
+}
+
+export const translationCacheDAO = {
+  async get(db: IDBDatabase, text: string, targetLanguage: string): Promise<TranslationCacheRecord | undefined> {
+    const id = makeTranslationCacheId(text, targetLanguage);
+    return getById<TranslationCacheRecord>(db, STORES.translation_cache, id);
+  },
+
+  async set(
+    db: IDBDatabase,
+    data: { text: string; targetLanguage: string; translation: string; keyWords?: { word: string; meaning: string }[] }
+  ): Promise<TranslationCacheRecord> {
+    const id = makeTranslationCacheId(data.text, data.targetLanguage);
+    const record: TranslationCacheRecord = {
+      id,
+      text: data.text,
+      targetLanguage: data.targetLanguage,
+      translation: data.translation,
+      keyWords: data.keyWords,
+      created_at: Date.now(),
+    };
+    await put(db, STORES.translation_cache, record);
+    return record;
+  },
+
+  async delete(db: IDBDatabase, id: string): Promise<void> {
+    await del(db, STORES.translation_cache, id);
+  },
+};
+
+// ========== WordDetailCache ==========
+
+/** 生成单词详情缓存 ID */
+export function makeWordDetailCacheId(word: string, targetLanguage: string): string {
+  return `wdc_${word.toLowerCase()}_${targetLanguage}`;
+}
+
+export const wordDetailCacheDAO = {
+  async get(db: IDBDatabase, word: string, targetLanguage: string): Promise<WordDetailCacheRecord | undefined> {
+    const id = makeWordDetailCacheId(word, targetLanguage);
+    return getById<WordDetailCacheRecord>(db, STORES.word_detail_cache, id);
+  },
+
+  async set(
+    db: IDBDatabase,
+    data: { word: string; targetLanguage: string; phonetic?: string; pos?: string; definition: string; example?: string }
+  ): Promise<WordDetailCacheRecord> {
+    const id = makeWordDetailCacheId(data.word, data.targetLanguage);
+    const record: WordDetailCacheRecord = {
+      id,
+      word: data.word,
+      targetLanguage: data.targetLanguage,
+      phonetic: data.phonetic,
+      pos: data.pos,
+      definition: data.definition,
+      example: data.example,
+      created_at: Date.now(),
+    };
+    await put(db, STORES.word_detail_cache, record);
+    return record;
+  },
+
+  async delete(db: IDBDatabase, id: string): Promise<void> {
+    await del(db, STORES.word_detail_cache, id);
   },
 };

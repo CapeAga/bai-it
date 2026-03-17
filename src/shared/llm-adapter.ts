@@ -1,11 +1,11 @@
 /**
  * LLM 适配层
  *
- * 支持两种 API 格式：Gemini 和 OpenAI 兼容。
+ * 支持三种 API 格式：Gemini、OpenAI 兼容、Anthropic。
  * 在 Service Worker 中运行，直接调用 LLM API。
  */
 
-import type { LLMConfig, ChunkResult, FullAnalysisResult } from "./types.ts";
+import type { LLMConfig, ChunkResult, FullAnalysisResult, WordDefinitionResult } from "./types.ts";
 
 // ========== Prompt 构建 ==========
 
@@ -105,6 +105,7 @@ export interface OpenAIRequestBody {
   messages: { role: string; content: string }[];
   temperature: number;
   response_format?: { type: string };
+  reasoning_effort?: string; // "low" | "medium" | "high" | "minimal" - for o1/o3 models
 }
 
 export function buildOpenAIRequest(prompt: string, config: LLMConfig): { url: string; body: OpenAIRequestBody; headers: Record<string, string> } {
@@ -119,11 +120,45 @@ export function buildOpenAIRequest(prompt: string, config: LLMConfig): { url: st
     ],
     temperature: 0.1,
     response_format: { type: "json_object" },
+    reasoning_effort: "minimal", // 禁用 extended thinking，适用于 o1/o3 等模型
   };
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${config.apiKey}`,
+  };
+
+  return { url, body, headers };
+}
+
+// ========== Anthropic 请求 ==========
+
+export interface AnthropicRequestBody {
+  model: string;
+  max_tokens: number;
+  messages: { role: string; content: string }[];
+  system?: string;
+  thinking?: { type: "disabled"; budget_tokens: 0 }; // 禁用 extended thinking
+}
+
+export function buildAnthropicRequest(prompt: string, config: LLMConfig): { url: string; body: AnthropicRequestBody; headers: Record<string, string> } {
+  const baseUrl = config.baseUrl.replace(/\/+$/, "") || "https://api.anthropic.com";
+  const url = `${baseUrl}/v1/messages`;
+
+  const body: AnthropicRequestBody = {
+    model: config.model,
+    max_tokens: 4096,
+    messages: [
+      { role: "user", content: prompt },
+    ],
+    system: "You are a helpful English reading assistant. Always respond with valid JSON.",
+    thinking: { type: "disabled", budget_tokens: 0 }, // 禁用 extended thinking
+  };
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": config.apiKey,
+    "anthropic-version": "2023-06-01",
   };
 
   return { url, body, headers };
@@ -155,6 +190,13 @@ interface OpenAIResponse {
   }[];
 }
 
+interface AnthropicResponse {
+  content?: {
+    type: string;
+    text?: string;
+  }[];
+}
+
 export function parseGeminiResponse(data: unknown): LLMChunkItem[] {
   const response = data as GeminiResponse;
   const text = response?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -169,6 +211,17 @@ export function parseOpenAIResponse(data: unknown): LLMChunkItem[] {
   const text = response?.choices?.[0]?.message?.content;
   if (!text) {
     throw new Error("OpenAI 返回了空响应");
+  }
+  return parseChunkJson(text);
+}
+
+export function parseAnthropicResponse(data: unknown): LLMChunkItem[] {
+  const response = data as AnthropicResponse;
+  // content 数组可能包含多个块（thinking、text 等），需要找到 type === "text" 的那个
+  const textBlock = response?.content?.find(block => block.type === "text");
+  const text = textBlock?.text;
+  if (!text) {
+    throw new Error("Anthropic 返回了空响应");
   }
   return parseChunkJson(text);
 }
@@ -269,6 +322,22 @@ export async function chunkSentences(
 
     responseData = await response.json();
     const items = parseGeminiResponse(responseData);
+    return mapToChunkResults(sentences, items);
+  } else if (config.format === "anthropic") {
+    const { url, body, headers } = buildAnthropicRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Anthropic API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+
+    responseData = await response.json();
+    const items = parseAnthropicResponse(responseData);
     return mapToChunkResults(sentences, items);
   } else {
     const { url, body, headers } = buildOpenAIRequest(prompt, config);
@@ -385,13 +454,20 @@ export function parseFullAnalysisJson(text: string): FullAnalysisResult {
 }
 
 /**
- * 提取 LLM 响应文本（Gemini 或 OpenAI 格式）
+ * 提取 LLM 响应文本（Gemini、OpenAI 或 Anthropic 格式）
  */
-function extractResponseText(data: unknown, format: "gemini" | "openai-compatible"): string {
+function extractResponseText(data: unknown, format: "gemini" | "openai-compatible" | "anthropic"): string {
   if (format === "gemini") {
     const response = data as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
     const text = response?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error("Gemini 返回了空响应");
+    return text;
+  } else if (format === "anthropic") {
+    const response = data as { content?: { type: string; text?: string }[] };
+    // content 数组可能包含多个块（thinking、text 等），需要找到 type === "text" 的那个
+    const textBlock = response?.content?.find(block => block.type === "text");
+    const text = textBlock?.text;
+    if (!text) throw new Error("Anthropic 返回了空响应");
     return text;
   } else {
     const response = data as { choices?: { message?: { content?: string } }[] };
@@ -424,6 +500,18 @@ export async function analyzeSentenceFull(
       throw new Error(`Gemini API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
     }
     responseData = await response.json();
+  } else if (config.format === "anthropic") {
+    const { url, body, headers } = buildAnthropicRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Anthropic API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
   } else {
     const { url, body, headers } = buildOpenAIRequest(prompt, config);
     const response = await fetch(url, {
@@ -440,4 +528,348 @@ export async function analyzeSentenceFull(
 
   const text = extractResponseText(responseData, config.format);
   return parseFullAnalysisJson(text);
+}
+
+// ========== 单词翻译 ==========
+
+/**
+ * 构建单词翻译提示词
+ */
+export function buildWordDefinitionPrompt(word: string): string {
+  return `Define the English word "${word}" in Chinese.
+
+## Output format
+Return a single JSON object:
+\`\`\`json
+{
+  "word": "${word}",
+  "phonetic": "/example/",
+  "definition": "中文释义",
+  "example": "an example sentence"
+}
+\`\`\`
+
+## Rules
+- Keep definition under 20 characters
+- Use Chinese only
+- Provide 1 most common meaning
+- Omit phonetic if unsure
+- example is optional, keep it short
+- Return valid JSON only, no markdown fences`;
+}
+
+/**
+ * 解析单词翻译结果 JSON
+ */
+export function parseWordDefinitionJson(text: string, word: string): WordDefinitionResult {
+  let cleaned = text.trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    cleaned = fenceMatch[1].trim();
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    throw new Error(`LLM 返回的 JSON 格式无效: ${cleaned.slice(0, 100)}...`);
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  return {
+    word: String(obj.word || word),
+    phonetic: obj.phonetic ? String(obj.phonetic) : undefined,
+    definition: String(obj.definition || ""),
+    example: obj.example ? String(obj.example) : undefined,
+  };
+}
+
+/**
+ * 查询单词释义（使用 LLM）
+ */
+export async function translateWord(
+  word: string,
+  config: LLMConfig
+): Promise<WordDefinitionResult> {
+  const prompt = buildWordDefinitionPrompt(word);
+
+  let responseData: unknown;
+
+  if (config.format === "gemini") {
+    const { url, body } = buildGeminiRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gemini API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
+  } else if (config.format === "anthropic") {
+    const { url, body, headers } = buildAnthropicRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Anthropic API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
+  } else {
+    const { url, body, headers } = buildOpenAIRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
+  }
+
+  const text = extractResponseText(responseData, config.format);
+  return parseWordDefinitionJson(text, word);
+}
+
+// ========== 句子翻译 ==========
+
+export interface TranslationResult {
+  translation: string;
+  keyWords?: { word: string; meaning: string }[];
+}
+
+/**
+ * 构建句子翻译提示词
+ */
+export function buildTranslationPrompt(text: string, targetLanguage: string): string {
+  const languageNames: Record<string, string> = {
+    zh: "Chinese",
+    ja: "Japanese",
+    ko: "Korean",
+    es: "Spanish",
+    fr: "French",
+    de: "German",
+  };
+  const targetLang = languageNames[targetLanguage] || targetLanguage;
+
+  return `Translate the following English text to ${targetLang}. Be concise and natural.
+
+Text: ${text}
+
+Return JSON only:
+{
+  "translation": "翻译结果",
+  "keyWords": [
+    { "word": "example", "meaning": "简要释义" }
+  ]
+}
+
+Rules:
+- translation: natural, preserve tone and meaning
+- keyWords: up to 3 important/challenging words with brief meanings in ${targetLang}
+- Return valid JSON only, no markdown fences`;
+}
+
+/**
+ * 翻译文本
+ */
+export async function translateText(
+  text: string,
+  targetLanguage: string,
+  config: LLMConfig
+): Promise<TranslationResult> {
+  const prompt = buildTranslationPrompt(text, targetLanguage);
+
+  let responseData: unknown;
+
+  if (config.format === "gemini") {
+    const { url, body } = buildGeminiRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gemini API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
+  } else if (config.format === "anthropic") {
+    const { url, body, headers } = buildAnthropicRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Anthropic API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
+  } else {
+    const { url, body, headers } = buildOpenAIRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
+  }
+
+  const resultText = extractResponseText(responseData, config.format);
+
+  // 解析结果
+  let cleaned = resultText.trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    cleaned = fenceMatch[1].trim();
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    // 如果解析失败，返回原文作为翻译
+    return { translation: text };
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  return {
+    translation: String(obj.translation || text),
+    keyWords: Array.isArray(obj.keyWords)
+      ? (obj.keyWords as { word: string; meaning: string }[]).slice(0, 3)
+      : undefined,
+  };
+}
+
+// ========== 单词详情（含词性） ==========
+
+export interface WordDetailResult {
+  word: string;
+  phonetic?: string;
+  pos?: string;
+  definition: string;
+  example?: string;
+}
+
+/**
+ * 构建单词详情提示词
+ */
+export function buildWordDetailPrompt(word: string, targetLanguage: string): string {
+  const languageNames: Record<string, string> = {
+    zh: "Chinese",
+    ja: "Japanese",
+    ko: "Korean",
+    es: "Spanish",
+    fr: "French",
+    de: "German",
+  };
+  const targetLang = languageNames[targetLanguage] || targetLanguage;
+
+  return `Define the English word "${word}" for language learners. Output in ${targetLang}.
+
+Return JSON only:
+{
+  "word": "${word}",
+  "phonetic": "/IPA/",
+  "pos": "n. / v. / adj. / adv. / prep. / conj.",
+  "definition": "简要释义",
+  "example": "Example sentence."
+}
+
+Rules:
+- phonetic: IPA format, omit if unsure
+- pos: part of speech abbreviation(s)
+- definition: brief meaning in ${targetLang}, under 30 characters
+- example: simple sentence using the word, under 15 words
+- Return valid JSON only, no markdown fences`;
+}
+
+/**
+ * 查询单词详情
+ */
+export async function getWordDetail(
+  word: string,
+  targetLanguage: string,
+  config: LLMConfig
+): Promise<WordDetailResult> {
+  const prompt = buildWordDetailPrompt(word, targetLanguage);
+
+  let responseData: unknown;
+
+  if (config.format === "gemini") {
+    const { url, body } = buildGeminiRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gemini API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
+  } else if (config.format === "anthropic") {
+    const { url, body, headers } = buildAnthropicRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Anthropic API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
+  } else {
+    const { url, body, headers } = buildOpenAIRequest(prompt, config);
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API 错误 (${response.status}): ${errorText.slice(0, 200)}`);
+    }
+    responseData = await response.json();
+  }
+
+  const resultText = extractResponseText(responseData, config.format);
+
+  // 解析结果
+  let cleaned = resultText.trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    cleaned = fenceMatch[1].trim();
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    return {
+      word,
+      definition: "",
+    };
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  return {
+    word: String(obj.word || word),
+    phonetic: obj.phonetic ? String(obj.phonetic) : undefined,
+    pos: obj.pos ? String(obj.pos) : undefined,
+    definition: String(obj.definition || ""),
+    example: obj.example ? String(obj.example) : undefined,
+  };
 }

@@ -14,13 +14,13 @@ import "fake-indexeddb/auto";
 import {
   resolveLLMConfig,
   migrateLLMConfig,
-  DEFAULT_PROVIDERS,
-  PROVIDER_META,
+  DEFAULT_PRESET_PROVIDERS,
+  PRESET_PROVIDER_META,
 } from "../shared/types.ts";
 import type {
   LLMMultiConfig,
   LLMConfig,
-  ProviderKey,
+  ProviderConfig,
   LearningRecord,
   PatternKey,
 } from "../shared/types.ts";
@@ -38,27 +38,37 @@ import { PATTERN_LABELS, PROVIDER_INFO } from "../options/constants.ts";
 
 describe("resolveLLMConfig", () => {
   it("resolves Gemini provider correctly", () => {
+    const providers: Record<string, ProviderConfig> = {
+      ...DEFAULT_PRESET_PROVIDERS,
+      gemini: {
+        ...DEFAULT_PRESET_PROVIDERS.gemini,
+        apiKey: "test-key",
+        model: "gemini-2.0-flash",
+      },
+    };
     const multi: LLMMultiConfig = {
       activeProvider: "gemini",
-      providers: {
-        ...DEFAULT_PROVIDERS,
-        gemini: { apiKey: "test-key", model: "gemini-2.0-flash" },
-      },
+      providers,
     };
     const result = resolveLLMConfig(multi);
     expect(result.format).toBe("gemini");
     expect(result.apiKey).toBe("test-key");
-    expect(result.baseUrl).toBe("");
+    expect(result.baseUrl).toBe("https://generativelanguage.googleapis.com");
     expect(result.model).toBe("gemini-2.0-flash");
   });
 
   it("resolves ChatGPT provider correctly", () => {
+    const providers: Record<string, ProviderConfig> = {
+      ...DEFAULT_PRESET_PROVIDERS,
+      chatgpt: {
+        ...DEFAULT_PRESET_PROVIDERS.chatgpt,
+        apiKey: "sk-xxx",
+        model: "gpt-4o-mini",
+      },
+    };
     const multi: LLMMultiConfig = {
       activeProvider: "chatgpt",
-      providers: {
-        ...DEFAULT_PROVIDERS,
-        chatgpt: { apiKey: "sk-xxx", model: "gpt-4o-mini" },
-      },
+      providers,
     };
     const result = resolveLLMConfig(multi);
     expect(result.format).toBe("openai-compatible");
@@ -68,12 +78,17 @@ describe("resolveLLMConfig", () => {
   });
 
   it("resolves DeepSeek provider correctly", () => {
+    const providers: Record<string, ProviderConfig> = {
+      ...DEFAULT_PRESET_PROVIDERS,
+      deepseek: {
+        ...DEFAULT_PRESET_PROVIDERS.deepseek,
+        apiKey: "ds-key",
+        model: "deepseek-chat",
+      },
+    };
     const multi: LLMMultiConfig = {
       activeProvider: "deepseek",
-      providers: {
-        ...DEFAULT_PROVIDERS,
-        deepseek: { apiKey: "ds-key", model: "deepseek-chat" },
-      },
+      providers,
     };
     const result = resolveLLMConfig(multi);
     expect(result.format).toBe("openai-compatible");
@@ -81,12 +96,17 @@ describe("resolveLLMConfig", () => {
   });
 
   it("resolves Qwen provider correctly", () => {
+    const providers: Record<string, ProviderConfig> = {
+      ...DEFAULT_PRESET_PROVIDERS,
+      qwen: {
+        ...DEFAULT_PRESET_PROVIDERS.qwen,
+        apiKey: "qwen-key",
+        model: "qwen-turbo",
+      },
+    };
     const multi: LLMMultiConfig = {
       activeProvider: "qwen",
-      providers: {
-        ...DEFAULT_PROVIDERS,
-        qwen: { apiKey: "qwen-key", model: "qwen-turbo" },
-      },
+      providers,
     };
     const result = resolveLLMConfig(multi);
     expect(result.format).toBe("openai-compatible");
@@ -94,16 +114,44 @@ describe("resolveLLMConfig", () => {
   });
 
   it("resolves Kimi provider correctly", () => {
+    const providers: Record<string, ProviderConfig> = {
+      ...DEFAULT_PRESET_PROVIDERS,
+      kimi: {
+        ...DEFAULT_PRESET_PROVIDERS.kimi,
+        apiKey: "kimi-key",
+        model: "moonshot-v1-8k",
+      },
+    };
     const multi: LLMMultiConfig = {
       activeProvider: "kimi",
-      providers: {
-        ...DEFAULT_PROVIDERS,
-        kimi: { apiKey: "kimi-key", model: "moonshot-v1-8k" },
-      },
+      providers,
     };
     const result = resolveLLMConfig(multi);
     expect(result.format).toBe("openai-compatible");
     expect(result.baseUrl).toBe("https://api.moonshot.cn");
+  });
+
+  it("resolves custom provider correctly", () => {
+    const providers: Record<string, ProviderConfig> = {
+      ...DEFAULT_PRESET_PROVIDERS,
+      custom_1: {
+        type: "custom",
+        name: "My Claude",
+        apiKey: "custom-key",
+        model: "claude-3-sonnet",
+        driver: "anthropic",
+        baseUrl: "https://my-proxy.com",
+      },
+    };
+    const multi: LLMMultiConfig = {
+      activeProvider: "custom_1",
+      providers,
+    };
+    const result = resolveLLMConfig(multi);
+    expect(result.format).toBe("anthropic");
+    expect(result.apiKey).toBe("custom-key");
+    expect(result.baseUrl).toBe("https://my-proxy.com");
+    expect(result.model).toBe("claude-3-sonnet");
   });
 });
 
@@ -111,12 +159,17 @@ describe("resolveLLMConfig", () => {
 
 describe("migrateLLMConfig", () => {
   it("passes through new format unchanged", () => {
+    const providers: Record<string, ProviderConfig> = {
+      ...DEFAULT_PRESET_PROVIDERS,
+      chatgpt: {
+        ...DEFAULT_PRESET_PROVIDERS.chatgpt,
+        apiKey: "sk-xxx",
+        model: "gpt-4o",
+      },
+    };
     const multi: LLMMultiConfig = {
       activeProvider: "chatgpt",
-      providers: {
-        ...DEFAULT_PROVIDERS,
-        chatgpt: { apiKey: "sk-xxx", model: "gpt-4o" },
-      },
+      providers,
     };
     const result = migrateLLMConfig(multi);
     expect(result.activeProvider).toBe("chatgpt");
@@ -129,6 +182,7 @@ describe("migrateLLMConfig", () => {
     expect(result.activeProvider).toBe("gemini");
     expect(result.providers.gemini.apiKey).toBe("old-key");
     expect(result.providers.gemini.model).toBe("gemini-2.0-flash");
+    expect(result.providers.gemini.driver).toBe("gemini");
   });
 
   it("migrates old OpenAI format", () => {
@@ -136,6 +190,7 @@ describe("migrateLLMConfig", () => {
     const result = migrateLLMConfig(old);
     expect(result.activeProvider).toBe("chatgpt");
     expect(result.providers.chatgpt.apiKey).toBe("sk-old");
+    expect(result.providers.chatgpt.driver).toBe("openai-compatible");
   });
 
   it("handles undefined/null gracefully", () => {
@@ -378,27 +433,29 @@ describe("Constants completeness", () => {
   });
 
   it("PROVIDER_INFO covers all 5 providers", () => {
-    const providers: ProviderKey[] = ["gemini", "chatgpt", "deepseek", "qwen", "kimi"];
+    const providers = ["gemini", "chatgpt", "deepseek", "qwen", "kimi"] as const;
     for (const key of providers) {
       expect(PROVIDER_INFO[key]).toBeDefined();
       expect(PROVIDER_INFO[key].models.length).toBeGreaterThan(0);
       expect(PROVIDER_INFO[key].hint.length).toBeGreaterThan(0);
+      expect(PROVIDER_INFO[key].driver).toBeDefined();
     }
   });
 
-  it("PROVIDER_META covers all 5 providers", () => {
-    const providers: ProviderKey[] = ["gemini", "chatgpt", "deepseek", "qwen", "kimi"];
+  it("PRESET_PROVIDER_META covers all 5 providers", () => {
+    const providers = ["gemini", "chatgpt", "deepseek", "qwen", "kimi"] as const;
     for (const key of providers) {
-      expect(PROVIDER_META[key]).toBeDefined();
-      expect(PROVIDER_META[key].label).toBeDefined();
-      expect(["gemini", "openai-compatible"]).toContain(PROVIDER_META[key].format);
+      expect(PRESET_PROVIDER_META[key]).toBeDefined();
+      expect(PRESET_PROVIDER_META[key].label).toBeDefined();
     }
   });
 
-  it("DEFAULT_PROVIDERS has default model for each provider", () => {
-    const providers: ProviderKey[] = ["gemini", "chatgpt", "deepseek", "qwen", "kimi"];
+  it("DEFAULT_PRESET_PROVIDERS has default model for each provider", () => {
+    const providers = ["gemini", "chatgpt", "deepseek", "qwen", "kimi"] as const;
     for (const key of providers) {
-      expect(DEFAULT_PROVIDERS[key].model.length).toBeGreaterThan(0);
+      expect(DEFAULT_PRESET_PROVIDERS[key].model.length).toBeGreaterThan(0);
+      expect(DEFAULT_PRESET_PROVIDERS[key].driver).toBeDefined();
+      expect(DEFAULT_PRESET_PROVIDERS[key].baseUrl.length).toBeGreaterThan(0);
     }
   });
 });

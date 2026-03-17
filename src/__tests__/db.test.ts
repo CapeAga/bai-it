@@ -35,9 +35,9 @@ afterEach(() => {
 // ========== Schema ==========
 
 describe("Schema 创建", () => {
-  it("创建了 10 张表", () => {
+  it("创建了 12 张表", () => {
     const names = Array.from(db.objectStoreNames);
-    expect(names).toHaveLength(10);
+    expect(names).toHaveLength(12);
     for (const store of Object.values(STORES)) {
       expect(names).toContain(store);
     }

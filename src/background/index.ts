@@ -12,8 +12,15 @@
 import type { Message, BaitConfig, ChunkResult, PatternKey } from "../shared/types.ts";
 import { DEFAULT_CONFIG, resolveLLMConfig, migrateLLMConfig } from "../shared/types.ts";
 import { getCachedBatch, setCacheBatch } from "../shared/cache.ts";
-import { chunkSentences, analyzeSentenceFull } from "../shared/llm-adapter.ts";
-import { openDB as openDataDB, pendingSentenceDAO, learningRecordDAO } from "../shared/db.ts";
+import { chunkSentences, analyzeSentenceFull, translateWord, translateText, getWordDetail } from "../shared/llm-adapter.ts";
+import {
+  openDB as openDataDB,
+  pendingSentenceDAO,
+  learningRecordDAO,
+  translationCacheDAO,
+  wordDetailCacheDAO,
+  vocabDAO,
+} from "../shared/db.ts";
 
 // ========== 配置管理 ==========
 
@@ -397,6 +404,241 @@ async function handleMessage(
       return { ok: true };
     }
 
+
+    case "translateWord": {
+      const { word } = message;
+      const cfg = await getConfig();
+      const llmCfg = resolveLLMConfig(cfg.llm);
+
+      if (!llmCfg.apiKey) {
+        return { error: "未配置 API Key" };
+      }
+
+      try {
+        const result = await translateWord(word, llmCfg);
+        return result;
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
+    case "translateSelection": {
+      const { text } = message;
+      const cfg = await getConfig();
+      const llmCfg = resolveLLMConfig(cfg.llm);
+      const targetLanguage = cfg.targetLanguage || "zh";
+
+      if (!llmCfg.apiKey) {
+        return { error: "未配置 API Key，请在设置页面配置" };
+      }
+
+      try {
+        // 查缓存
+        const db = await getDB();
+        const cached = await translationCacheDAO.get(db, text, targetLanguage);
+        if (cached) {
+          return { translation: cached.translation, keyWords: cached.keyWords };
+        }
+
+        // 调 LLM
+        const result = await translateText(text, targetLanguage, llmCfg);
+
+        // 存缓存
+        await translationCacheDAO.set(db, {
+          text,
+          targetLanguage,
+          translation: result.translation,
+          keyWords: result.keyWords,
+        });
+
+        return result;
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
+    case "getWordDetail": {
+      const { word } = message;
+      const cfg = await getConfig();
+      const llmCfg = resolveLLMConfig(cfg.llm);
+      const targetLanguage = cfg.targetLanguage || "zh";
+
+      if (!llmCfg.apiKey) {
+        return { error: "未配置 API Key" };
+      }
+
+      try {
+        // 查缓存
+        const db = await getDB();
+        const cached = await wordDetailCacheDAO.get(db, word, targetLanguage);
+        if (cached) {
+          return {
+            word: cached.word,
+            phonetic: cached.phonetic,
+            pos: cached.pos,
+            definition: cached.definition,
+            example: cached.example,
+          };
+        }
+
+        // 调 LLM
+        const result = await getWordDetail(word, targetLanguage, llmCfg);
+
+        // 存缓存
+        await wordDetailCacheDAO.set(db, {
+          word,
+          targetLanguage,
+          phonetic: result.phonetic,
+          pos: result.pos,
+          definition: result.definition,
+          example: result.example,
+        });
+
+        return result;
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
+    // ========== 生词本操作 ==========
+
+    case "addToVocab": {
+      const { word, phonetic, pos, definition, example } = message;
+      const db = await getDB();
+
+      try {
+        // 检查是否已存在
+        const existing = await vocabDAO.getByWord(db, word.toLowerCase());
+        if (existing) {
+          // 已存在，更新释义并增加遭遇次数
+          const updated = await vocabDAO.update(db, existing.id, {
+            phonetic: phonetic || existing.phonetic,
+            pos: pos || existing.pos,
+            definition: definition || existing.definition,
+            example: example || existing.example,
+            encounter_count: existing.encounter_count + 1,
+          });
+          return { success: true, record: updated };
+        }
+
+        // 新增
+        const record = await vocabDAO.add(db, {
+          word: word.toLowerCase(),
+          status: "new",
+          phonetic,
+          pos,
+          definition,
+          example,
+        });
+        return { success: true, record };
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
+    case "removeFromVocab": {
+      const { word } = message;
+      const db = await getDB();
+
+      try {
+        const existing = await vocabDAO.getByWord(db, word.toLowerCase());
+        if (!existing) {
+          return { success: false, error: "单词不在生词本中" };
+        }
+        await vocabDAO.delete(db, existing.id);
+        return { success: true };
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
+    case "checkVocab": {
+      const { word } = message;
+      const db = await getDB();
+
+      try {
+        const existing = await vocabDAO.getByWord(db, word.toLowerCase());
+        return { inVocab: !!existing, record: existing || null };
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
+    case "getVocabWords": {
+      const db = await getDB();
+
+      try {
+        const records = await vocabDAO.getAll(db);
+        // 返回单词列表（不含 mastered 状态的）
+        const words = records
+          .filter(r => r.status !== "mastered")
+          .map(r => ({
+            word: r.word,
+            phonetic: r.phonetic,
+            pos: r.pos,
+            definition: r.definition,
+            status: r.status,
+          }));
+        return { words };
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
+    case "exportVocab": {
+      const db = await getDB();
+
+      try {
+        const records = await vocabDAO.getAll(db);
+        // 返回所有单词（包括 mastered）
+        return { words: records };
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
+    case "importVocab": {
+      const { words } = message;
+      const db = await getDB();
+
+      try {
+        let added = 0;
+        let skipped = 0;
+
+        for (const w of words) {
+          const existing = await vocabDAO.getByWord(db, w.word.toLowerCase());
+          if (existing) {
+            // 已存在，跳过（合并模式）
+            skipped++;
+          } else {
+            // 新增
+            await vocabDAO.add(db, {
+              word: w.word.toLowerCase(),
+              status: w.status || "new",
+              phonetic: w.phonetic,
+              pos: w.pos,
+              definition: w.definition,
+              example: w.example,
+            });
+            added++;
+          }
+        }
+
+        return { success: true, added, skipped };
+      } catch (e) {
+        const err = e as Error;
+        return { error: err.message };
+      }
+    }
+
     default:
       return { error: "Unknown message type" };
   }
@@ -424,5 +666,29 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     const siteOn = hostname ? await isSiteEnabled(hostname) : false;
     const active = siteOn && !pausedTabs.has(tabId);
     updateIcon(tabId, active);
+  }
+});
+
+// ========== 右键菜单 ==========
+
+// 安装时创建菜单
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: "translate-selection",
+    title: "翻译选中内容",
+    contexts: ["selection"],
+  });
+});
+
+// 菜单点击处理
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === "translate-selection" && info.selectionText && tab?.id) {
+    const text = info.selectionText.trim();
+
+    // 发送给 content script 显示翻译结果
+    chrome.tabs.sendMessage(tab.id, {
+      type: "showTranslationTooltip",
+      text,
+    }).catch(() => {});
   }
 });

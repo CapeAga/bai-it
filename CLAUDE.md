@@ -1,21 +1,25 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # 掰it — 项目指南
 
-## 项目简介
-
-掰it 是一个纯本地 Chrome 扩展，帮助用户在浏览英文网页时拆解长句结构、标注生词。零后端、零登录。
+掰it 是一个纯本地 Chrome/Firefox 扩展，帮助用户在浏览英文网页时拆解长句结构、标注生词。零后端、零登录。
 
 详见 [README.md](./README.md)。
 
 ## 开发
 
 ```bash
-npm install        # 安装依赖
-npm run build      # 构建到 dist/
-npm test           # 运行单元测试（Vitest）
-npm run release    # 发布：跑测试 + 构建 + 打包 bai-it.zip
+npm install              # 安装依赖
+npm run build            # 构建到 dist/
+npm run build:firefox    # 构建 + 打包 Firefox 版本
+npm test                 # 运行全部单元测试（Vitest）
+npm test -- scan-rules   # 运行指定测试文件
+npm run dev              # 开发模式（watch + sourcemap）
 ```
 
-构建产物在 `dist/` 目录，加载到 Chrome 的开发者模式即可测试。
+构建产物在 `dist/` 目录。Chrome 加载 `dist/`，Firefox 需要先运行 `npm run build:firefox` 生成 zip 后解压安装。
 
 ## 发布
 
@@ -33,26 +37,60 @@ src/
 ├── content/       # Content Script（网页注入）
 ├── popup/         # 插件弹窗
 ├── options/       # 管理页面（React）
-│   ├── components/
-│   ├── hooks/
-│   └── tabs/
-└── shared/        # 共享模块（DB、LLM、词汇、规则引擎）
-data/              # 词频表 + 离线词典
-tests/             # 单元测试 + 浏览器验收测试
+└── shared/        # 共享模块
+    ├── browser-api.ts     # 跨浏览器 API 兼容层（统一 Chrome/Firefox API）
+    ├── db.ts              # IndexedDB 数据层（10 张表）
+    ├── llm-adapter.ts     # LLM 适配层（Gemini + OpenAI 兼容格式）
+    ├── scan-rules.ts      # 本地拆分规则
+    ├── rule-engine.ts     # 英文检测 + 复杂度估算
+    ├── vocab.ts           # 生词标注逻辑
+    └── types.ts           # 类型定义
+data/              # 词频表 + 离线词典（ECDICT）+ 行业术语包
+tests/             # 单元测试
 docs/              # 产品需求 / 设计规范 / 技术架构
-_local/            # 内部文件（.gitignore 排除，不进 git）
 ```
+
+## 跨浏览器兼容性
+
+使用 `src/shared/browser-api.ts` 统一 API 入口：
+
+```typescript
+import { storage, runtime, tabs, action } from "./shared/browser-api.ts";
+// 代替 chrome.storage.sync.get(...)
+const result = await storage.sync.get(keys);
+```
+
+Firefox 打包由 `scripts/package-firefox.mjs` 处理：修改 manifest.json 的 `browser_specific_settings.gecko` 和 `background.scripts`。
 
 ## 构建配置
 
 - **ESM** 仅用于 background service worker（MV3 要求 `type: module`）
 - **IIFE** 用于 content script、popup、options（Chrome 不支持 content script ESM）
+- 构建工具：ESBuild（`build.mjs`），不使用 Vite/Webpack/Plasmo
 
 ## 数据存储
 
-- **IndexedDB**（`openen-data`）：学习记录、生词、待分析句子等
+- **IndexedDB**（`openen-data`）：学习记录、生词、待分析句子（10 张表，见 `docs/architecture.md`）
 - **chrome.storage.sync**：LLM 配置、站点开关等用户偏好
 - **chrome.storage.local**：已掌握词列表
+
+## 核心逻辑
+
+### 两级分块：本地优先，LLM 兜底
+
+```
+句子 → 本地规则判断 → 能拆？→ 本地拆分（即时）→ 离线词典标注生词
+                  ↘ 不能？→ LLM 拆分（1-2s）→ 语境化释义
+```
+
+- 本地规则：`scan-rules.ts`（长度阈值 + 逻辑转换点断行）
+- LLM 适配：`llm-adapter.ts`（Gemini + OpenAI 兼容格式）
+
+### 生词标注三层词汇源
+
+1. 行业术语包（`data/industry-*.json`）优先
+2. 离线词典（`data/dict-ecdict.json`）
+3. LLM 语境化释义（仅调 LLM 时）
 
 ## 文档
 

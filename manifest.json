@@ -2,14 +2,9 @@
   "manifest_version": 3,
   "name": "掰it — 英文阅读助手",
   "description": "帮你拆解英文长句结构，标注生词，提升阅读效率",
-  "version": "0.2.5",
-  "permissions": [
-    "storage",
-    "activeTab"
-  ],
-  "host_permissions": [
-    "*://*/*"
-  ],
+  "version": "0.2.6c",
+  "permissions": ["storage", "activeTab", "contextMenus"],
+  "host_permissions": ["*://*/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "node build.mjs --watch",
     "build": "node build.mjs",
-    "release": "npm test && npm run build && VERSION=$(node -p \"require('./manifest.json').version\") && cd dist && zip -r \"../bai-it-v${VERSION}.zip\" . && cd .. && node scripts/package-firefox.mjs && echo \"Packaged: bai-it-v${VERSION}.zip + Firefox zip\"",
+    "build:firefox": "npm run build && node scripts/package-firefox.mjs",
+    "build:safari": "npm run build && node scripts/build-safari.mjs",
+    "build:safari:init": "npm run build && node scripts/build-safari.mjs --init",
+    "release": "npm test && npm run build && node scripts/release.mjs",
     "test": "vitest run"
   },
   "devDependencies": {
@@ -14,11 +17,13 @@
     "@types/react-dom": "^19.2.3",
     "esbuild": "^0.25",
     "fake-indexeddb": "^6.2.5",
+    "pos": "^0.4.2",
     "puppeteer": "^24.37.5",
     "typescript": "^5.7",
     "vitest": "^3"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.58",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   }

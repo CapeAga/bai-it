@@ -6,7 +6,7 @@
 
 🌐 官网：[bai-it.app](https://bai-it.app)
 
-掰it 是一个 Chrome 浏览器插件，帮你把英文网页上读不下去的长句"掰"成一段一段的，顺便帮你认生词。
+掰it 是一个浏览器扩展，支持 Chrome 和 Firefox，帮你把英文网页上读不下去的长句"掰"成一段一段的，顺便帮你认生词。
 
 装完就能用，不用注册，不用登录，你的数据全部留在自己的浏览器里。
 
@@ -53,6 +53,16 @@
 4. 打开右上角「开发者模式」
 5. 点击「加载已解压的扩展程序」，选择解压出来的文件夹
 
+### Firefox 安装
+
+1. 到 [Releases](https://github.com/CapeAga/bai-it/releases) 页面下载最新的 `bai-it-firefox-vX.X.X.zip`
+2. **解压** zip 文件到一个文件夹
+3. 打开 Firefox，地址栏输入 `about:debugging`
+4. 点击左侧 "This Firefox" → "Load Temporary Add-on"
+5. 选择解压文件夹中的 `manifest.json`
+
+> 注意：临时加载的扩展在 Firefox 重启后会消失。如需永久安装，请等待 Mozilla Add-ons 审核通过后从商店安装。
+
 ### 从源码构建（开发者）
 
 1. 克隆本仓库
@@ -64,6 +74,12 @@
 3. 打开 Chrome，进入 `chrome://extensions/`
 4. 打开右上角「开发者模式」
 5. 点击「加载已解压的扩展程序」，选择项目的 `dist/` 目录
+
+**构建 Firefox 版本：**
+```bash
+npm run build:firefox
+```
+生成的 `bai-it-firefox-vX.X.X.zip` 可用于 Firefox 安装。
 
 ## 使用
 
@@ -93,7 +109,7 @@
 
 ## 技术栈
 
-- Chrome Extension Manifest V3
+- Chrome & Firefox Extension Manifest V3
 - TypeScript + React（管理页面）
 - ESBuild 构建
 - IndexedDB 本地存储

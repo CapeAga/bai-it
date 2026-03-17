@@ -7,14 +7,16 @@ import { Dashboard } from "./tabs/Dashboard.tsx";
 import { DailyReview } from "./tabs/DailyReview.tsx";
 import { Sentences } from "./tabs/Sentences.tsx";
 import { Settings } from "./tabs/Settings.tsx";
+import { Vocabulary } from "./tabs/Vocabulary.tsx";
 import { useDB } from "./hooks/useDB.ts";
 import { useConfig } from "./hooks/useConfig.ts";
 import { useOnboardingState } from "./hooks/useOnboardingState.ts";
 import { MasteredWordsContext, useMasteredWordsProvider } from "./hooks/useMasteredWords.ts";
+import type { BaitConfig } from "../shared/types.ts";
 
-export type TabKey = "dashboard" | "review" | "sentences" | "settings";
+export type TabKey = "dashboard" | "review" | "sentences" | "vocabulary" | "settings";
 
-const TABS: TabKey[] = ["dashboard", "review", "sentences", "settings"];
+const TABS: TabKey[] = ["dashboard", "review", "sentences", "vocabulary", "settings"];
 
 function getTabFromHash(): TabKey {
   const hash = window.location.hash.slice(1);
@@ -38,6 +40,37 @@ export function App() {
   const reviewIsExample = !onboarding.hasData;
 
   const masteredWordsValue = useMasteredWordsProvider(db);
+
+  // Apply theme
+  useEffect(() => {
+    const applyTheme = (theme: BaitConfig["theme"]) => {
+      if (theme === "light") {
+        document.body.classList.add("light-mode");
+      } else if (theme === "dark") {
+        document.body.classList.remove("light-mode");
+      } else {
+        // auto: follow system preference
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (prefersDark) {
+          document.body.classList.remove("light-mode");
+        } else {
+          document.body.classList.add("light-mode");
+        }
+      }
+    };
+
+    if (!configLoading) {
+      applyTheme(config.theme);
+    }
+
+    // Listen for system preference changes when in auto mode
+    if (!configLoading && config.theme === "auto") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handler = () => applyTheme("auto");
+      mediaQuery.addEventListener("change", handler);
+      return () => mediaQuery.removeEventListener("change", handler);
+    }
+  }, [config.theme, configLoading]);
 
   const handleTabChange = useCallback((tab: TabKey) => {
     setActiveTab(tab);
@@ -107,6 +140,9 @@ export function App() {
             <div className={`tab-panel ${activeTab === "sentences" ? "active" : ""}`}>
               {activeTab === "sentences" && <Sentences key={tabKey} db={db} isExample={sentencesIsExample} />}
             </div>
+            <div className={`tab-panel ${activeTab === "vocabulary" ? "active" : ""}`}>
+              {activeTab === "vocabulary" && <Vocabulary key={tabKey} db={db} />}
+            </div>
             <div className={`tab-panel ${activeTab === "settings" ? "active" : ""}`}>
               {activeTab === "settings" && (
                 <Settings
@@ -114,6 +150,7 @@ export function App() {
                   config={config}
                   configLoading={configLoading}
                   updateLLM={updateLLM}
+                  saveConfig={saveConfig}
                 />
               )}
             </div>
