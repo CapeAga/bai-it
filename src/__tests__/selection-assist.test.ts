@@ -29,6 +29,8 @@ describe("shouldHandleSelection", () => {
     expect(shouldHandleSelection("")).toBe(false);
     expect(shouldHandleSelection("   ")).toBe(false);
     expect(shouldHandleSelection("这是中文")).toBe(false);
+    expect(shouldHandleSelection("对你这种情况，我的真实建议 最优路线 不要从“终极自动识别”开始。")).toBe(false);
+    expect(shouldHandleSelection("第一版 MVP 微信小程序 支持拍照或上传")).toBe(false);
   });
 
   it("rejects only extremely large selections", () => {
@@ -58,6 +60,11 @@ I'm curious: would you actually trust an AI to handle this for your agency? Or d
 
   it("rejects overly large selections", () => {
     expect(getSelectionAssistType(extremelyLargeSelection)).toBe("none");
+  });
+
+  it("rejects mixed Chinese selections even when they contain some English tokens", () => {
+    expect(getSelectionAssistType("第一版 MVP 微信小程序 支持拍照或上传")).toBe("none");
+    expect(getSelectionAssistType("对你这种情况，我的真实建议 最优路线 不要从“终极自动识别”开始。")).toBe("none");
   });
 });
 

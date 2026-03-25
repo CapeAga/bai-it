@@ -34,6 +34,7 @@ function countSelectionLines(text: string): number {
 export function getSelectionAssistType(text: string): SelectionAssistType {
   const normalized = normalizeSelectedText(text);
   if (!normalized) return "none";
+  if (/[\u3400-\u9fff\uf900-\ufaff]/.test(normalized)) return "none";
   if (!/[a-zA-Z]/.test(normalized)) return "none";
 
   const words = normalized.split(" ");
