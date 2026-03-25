@@ -12,11 +12,17 @@ import { isEnglish } from "../shared/rule-engine.ts";
 import { scanSplit, toChunkedString } from "../shared/scan-rules.ts";
 import {
   loadFrequencyList, loadDictionary, loadLemmaMap,
-  annotateWords, toNewWordsFormat, isLoaded,
+  annotateWords, toNewWordsFormat, isLoaded, lookupDefinitionForSelection,
 } from "../shared/vocab.ts";
-import type { BaitConfig, ChunkResult, BackgroundMessage } from "../shared/types.ts";
-import { DEFAULT_CONFIG } from "../shared/types.ts";
+import type { BaitConfig, ChunkResult, BackgroundMessage, SentenceAssistResult, WordAssistResult } from "../shared/types.ts";
+import { DEFAULT_CONFIG, migrateLLMConfig, resolveLLMConfig } from "../shared/types.ts";
+import { getSelectionAssistType, hasSelectionToAssist, isPointerWithinSelectionAssistZone, normalizeSelectedText, shouldHandleSelection } from "../shared/selection-assist.ts";
+import { getSpeechUtteranceConfig } from "../shared/tts.ts";
+import { sendRuntimeMessage } from "../shared/runtime-message.ts";
+import { renderWordAssistTooltip } from "./word-assist.ts";
 import { createChunkedElement } from "./renderer.ts";
+import { renderSentenceAssistCard } from "./sentence-assist.ts";
+import type { SentenceAssistCardState } from "./sentence-assist.ts";
 import { ENLEARN_STYLES } from "./styles.ts";
 
 // ========== 词汇数据（构建时打包）==========
@@ -43,7 +49,31 @@ const knownWords = new Set<string>(); // 用户已掌握的词（从 storage 加
 let tooltipEl: HTMLElement | null = null;
 
 let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+let selectionProcessTimer: ReturnType<typeof setTimeout> | null = null;
 let currentTooltipWord: string | null = null;
+let hasApiKeyConfigured = false;
+let sentenceTooltipState: SentenceAssistCardState | null = null;
+let sentenceTooltipRequestId = 0;
+let suppressSelectionHideUntil = 0;
+let selectionTooltipActive = false;
+let selectionTooltipAnchorRect: DOMRect | null = null;
+let tooltipState: {
+  word: string;
+  phonetic: string;
+  chineseHint: string;
+  simpleEnglish: string;
+  example: string;
+  loading: boolean;
+  context: string;
+  markable: boolean;
+  chineseExpanded: boolean;
+  hasApiKey: boolean;
+  requestFailed: boolean;
+} | null = null;
+const wordAssistCache = new Map<string, WordAssistResult>();
+const sentenceAssistCache = new Map<string, SentenceAssistResult>();
+const sentenceAssistCardState = new WeakMap<HTMLElement, SentenceAssistCardState>();
+let tooltipRequestId = 0;
 
 function setupTooltip(): void {
   if (tooltipEl) return;
@@ -58,10 +88,16 @@ function setupTooltip(): void {
   tooltipEl.addEventListener("mouseleave", () => {
     scheduleHideTooltip();
   });
+  tooltipEl.addEventListener("mousedown", () => {
+    suppressSelectionHideUntil = Date.now() + 500;
+  });
   tooltipEl.addEventListener("click", onTooltipClick);
 
   document.addEventListener("mouseover", onWordHover);
   document.addEventListener("mouseout", onWordLeave);
+  document.addEventListener("mouseup", onSelectionPointerUp);
+  document.addEventListener("selectionchange", onSelectionChange);
+  document.addEventListener("mousemove", onSelectionPointerMove);
   document.addEventListener("mouseover", onTriggerParentHover);
   document.addEventListener("mouseout", onTriggerParentLeave);
 }
@@ -69,15 +105,78 @@ function setupTooltip(): void {
 function scheduleHideTooltip(): void {
   if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
   tooltipHideTimer = setTimeout(() => {
-    if (tooltipEl) tooltipEl.style.display = "none";
-    currentTooltipWord = null;
-    tooltipHideTimer = null;
+    hideTooltip();
   }, 150);
 }
 
+function hideTooltip(): void {
+  if (tooltipEl) tooltipEl.style.display = "none";
+  currentTooltipWord = null;
+  tooltipState = null;
+  sentenceTooltipState = null;
+  selectionTooltipActive = false;
+  selectionTooltipAnchorRect = null;
+  tooltipHideTimer = null;
+}
+
+function invalidateSelectionRequests(): void {
+  tooltipRequestId += 1;
+  sentenceTooltipRequestId += 1;
+}
+
+async function refreshApiKeyConfigured(): Promise<boolean> {
+  const response = await sendMessage({ type: "hasApiKey" }) as { hasKey: boolean };
+  hasApiKeyConfigured = response.hasKey;
+  return response.hasKey;
+}
+
 async function onTooltipClick(e: MouseEvent): Promise<void> {
+  if (sentenceTooltipState) {
+    const audioBtn = (e.target as Element).closest?.(".enlearn-sentence-assist-audio");
+    if (audioBtn) {
+      speakBritish(sentenceTooltipState.sentence);
+      return;
+    }
+
+    const toggleBtn = (e.target as Element).closest?.(".enlearn-sentence-assist-toggle");
+    if (toggleBtn) {
+      sentenceTooltipState = {
+        ...sentenceTooltipState,
+        chineseExpanded: !sentenceTooltipState.chineseExpanded,
+      };
+      renderSentenceSelectionTooltip();
+      return;
+    }
+
+    const learningBtn = (e.target as Element).closest?.(".enlearn-sentence-assist-learning-toggle");
+    if (learningBtn) {
+      sentenceTooltipState = {
+        ...sentenceTooltipState,
+        learningPointExpanded: !sentenceTooltipState.learningPointExpanded,
+      };
+      renderSentenceSelectionTooltip();
+      return;
+    }
+  }
+
+  const audioBtn = (e.target as Element).closest?.(".enlearn-tooltip-audio");
+  if (audioBtn && tooltipState) {
+    speakBritish(tooltipState.word);
+    return;
+  }
+
+  const tooltipToggle = (e.target as Element).closest?.(".enlearn-tooltip-toggle");
+  if (tooltipToggle && tooltipState) {
+    tooltipState = {
+      ...tooltipState,
+      chineseExpanded: !tooltipState.chineseExpanded,
+    };
+    renderTooltip();
+    return;
+  }
+
   const btn = (e.target as Element).closest?.(".enlearn-tooltip-btn");
-  if (!btn || !currentTooltipWord) return;
+  if (!btn || !currentTooltipWord || !tooltipState?.markable) return;
 
   const word = currentTooltipWord;
   knownWords.add(word);
@@ -96,40 +195,53 @@ async function onTooltipClick(e: MouseEvent): Promise<void> {
   });
 
   // Hide tooltip
-  if (tooltipEl) tooltipEl.style.display = "none";
-  currentTooltipWord = null;
+  hideTooltip();
 }
 
-function onWordHover(e: MouseEvent): void {
+async function onWordHover(e: MouseEvent): Promise<void> {
   const wordEl = (e.target as Element).closest?.(".enlearn-word") as HTMLElement | null;
   if (!wordEl || !tooltipEl) return;
 
-  const def = wordEl.getAttribute("data-def");
-  if (!def) return;
+  if (hasSelectionToAssist(window.getSelection())) return;
+
+  const apiReady = hasApiKeyConfigured || await refreshApiKeyConfigured();
+
+  const chineseHint = wordEl.getAttribute("data-def") || "";
+  if (!chineseHint) return;
 
   // Cancel any pending hide
   if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
 
   currentTooltipWord = (wordEl.dataset.word || wordEl.textContent || "").toLowerCase();
-  tooltipEl.innerHTML = `<span class="enlearn-tooltip-def">${escapeHtml(def)}</span><button class="enlearn-tooltip-btn" title="标记为已掌握">✓</button>`;
+  selectionTooltipActive = false;
+  selectionTooltipAnchorRect = null;
+  const context = wordEl.closest<HTMLElement>("[data-original]")?.dataset.original || "";
+  tooltipState = {
+    word: wordEl.textContent || currentTooltipWord,
+    phonetic: "",
+    chineseHint,
+    simpleEnglish: "",
+    example: "",
+    loading: apiReady,
+    context,
+    markable: true,
+    chineseExpanded: false,
+    hasApiKey: apiReady,
+    requestFailed: false,
+  };
+  renderTooltip();
   tooltipEl.style.display = "flex";
 
-  const wordRect = wordEl.getBoundingClientRect();
-  const tipRect = tooltipEl.getBoundingClientRect();
+  positionTooltipByRect(wordEl.getBoundingClientRect());
 
-  let left = wordRect.left + wordRect.width / 2 - tipRect.width / 2;
-  let top = wordRect.top - tipRect.height - 6;
-
-  if (left < 4) left = 4;
-  if (left + tipRect.width > window.innerWidth - 4) {
-    left = window.innerWidth - 4 - tipRect.width;
-  }
-  if (top < 4) {
-    top = wordRect.bottom + 6;
-  }
-
-  tooltipEl.style.left = `${left}px`;
-  tooltipEl.style.top = `${top}px`;
+  const requestId = ++tooltipRequestId;
+  await enrichTooltipWithLLM({
+    requestId,
+    word: tooltipState.word,
+    context,
+    chineseHint,
+    reposition: () => positionTooltipByRect(wordEl.getBoundingClientRect()),
+  });
 }
 
 function onWordLeave(e: MouseEvent): void {
@@ -138,8 +250,440 @@ function onWordLeave(e: MouseEvent): void {
   scheduleHideTooltip();
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+function onSelectionPointerUp(e: MouseEvent): void {
+  const target = e.target as Element | null;
+  if (target?.closest?.(".enlearn-tooltip")) return;
+
+  if (selectionProcessTimer) clearTimeout(selectionProcessTimer);
+  selectionProcessTimer = setTimeout(() => {
+    void processCurrentSelection();
+  }, 40);
+}
+
+function onSelectionChange(): void {
+  const selection = window.getSelection();
+  if (hasSelectionToAssist(selection)) return;
+
+  if (selectionProcessTimer) clearTimeout(selectionProcessTimer);
+  selectionProcessTimer = setTimeout(() => {
+    void processCurrentSelection();
+  }, 40);
+}
+
+function onSelectionPointerMove(e: MouseEvent): void {
+  if (!selectionTooltipActive || !tooltipEl || tooltipEl.style.display === "none") return;
+  if (Date.now() <= suppressSelectionHideUntil) return;
+
+  const withinAssistZone = isPointerWithinSelectionAssistZone({
+    pointerX: e.clientX,
+    pointerY: e.clientY,
+    selectionRect: selectionTooltipAnchorRect,
+    tooltipRect: tooltipEl.getBoundingClientRect(),
+  });
+
+  if (withinAssistZone) {
+    if (tooltipHideTimer) {
+      clearTimeout(tooltipHideTimer);
+      tooltipHideTimer = null;
+    }
+    return;
+  }
+
+  scheduleHideTooltip();
+}
+
+function getSelectionRect(selection: Selection): DOMRect | null {
+  if (selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  const rect = range.getBoundingClientRect();
+  if (rect.width !== 0 || rect.height !== 0) return rect;
+
+  const rects = Array.from(range.getClientRects());
+  if (rects.length === 0) return null;
+
+  const left = Math.min(...rects.map(r => r.left));
+  const top = Math.min(...rects.map(r => r.top));
+  const right = Math.max(...rects.map(r => r.right));
+  const bottom = Math.max(...rects.map(r => r.bottom));
+  return new DOMRect(left, top, right - left, bottom - top);
+}
+
+async function processCurrentSelection(): Promise<void> {
+  selectionProcessTimer = null;
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    if (sentenceTooltipState && Date.now() > suppressSelectionHideUntil) {
+      invalidateSelectionRequests();
+      hideTooltip();
+    }
+    return;
+  }
+
+  const text = normalizeSelectedText(selection.toString());
+  if (!shouldHandleSelection(text)) {
+    if (sentenceTooltipState && Date.now() > suppressSelectionHideUntil) {
+      invalidateSelectionRequests();
+      hideTooltip();
+    }
+    return;
+  }
+
+  if (tooltipHideTimer) {
+    clearTimeout(tooltipHideTimer);
+    tooltipHideTimer = null;
+  }
+
+  const rect = getSelectionRect(selection);
+  if (!rect || (rect.width === 0 && rect.height === 0)) return;
+
+  const assistType = getSelectionAssistType(text);
+  if (assistType === "sentence") {
+    const apiReady = hasApiKeyConfigured || await refreshApiKeyConfigured();
+    const requestId = ++sentenceTooltipRequestId;
+    tooltipState = null;
+    currentTooltipWord = null;
+    selectionTooltipActive = true;
+    selectionTooltipAnchorRect = rect;
+    sentenceTooltipState = {
+      sentence: text,
+      simplerEnglish: "",
+      backupChinese: "",
+      learningPoint: "",
+      chineseExpanded: false,
+      learningPointExpanded: false,
+      loading: apiReady,
+      hasApiKey: apiReady,
+    };
+    renderSentenceSelectionTooltip();
+    if (tooltipEl) tooltipEl.style.display = "flex";
+    positionTooltipByRect(rect);
+    await enrichSentenceSelectionTooltip(requestId, text, () => positionTooltipByRect(rect));
+    return;
+  }
+
+  const chineseHint =
+    lookupDefinitionForSelection(text) || "暂无本地释义，可配置 API 获取更贴语境的解释。";
+  const context = getSelectionContext(selection);
+  const apiReady = hasApiKeyConfigured || await refreshApiKeyConfigured();
+
+  currentTooltipWord = text.toLowerCase();
+  selectionTooltipActive = true;
+  selectionTooltipAnchorRect = rect;
+  tooltipState = {
+    word: text,
+    phonetic: "",
+    chineseHint,
+    simpleEnglish: "",
+    example: "",
+    loading: apiReady,
+    context,
+    markable: !/\s/.test(text),
+    chineseExpanded: false,
+    hasApiKey: apiReady,
+    requestFailed: false,
+  };
+  renderTooltip();
+  if (tooltipEl) tooltipEl.style.display = "flex";
+  positionTooltipByRect(rect);
+
+  const requestId = ++tooltipRequestId;
+  await enrichTooltipWithLLM({
+    requestId,
+    word: text,
+    context,
+    chineseHint,
+    reposition: () => positionTooltipByRect(rect),
+  });
+}
+
+async function enrichSentenceSelectionTooltip(
+  requestId: number,
+  sentence: string,
+  reposition: () => void
+): Promise<void> {
+  if (!hasApiKeyConfigured && !(await refreshApiKeyConfigured())) {
+    if (sentenceTooltipState && requestId === sentenceTooltipRequestId) {
+      sentenceTooltipState = { ...sentenceTooltipState, loading: false, hasApiKey: false };
+      renderSentenceSelectionTooltip();
+      reposition();
+    }
+    return;
+  }
+
+  const cacheKey = sentence.trim();
+  const cached = sentenceAssistCache.get(cacheKey);
+  if (cached) {
+    if (!sentenceTooltipState || sentenceTooltipState.sentence !== sentence || requestId !== sentenceTooltipRequestId) return;
+    sentenceTooltipState = {
+      ...sentenceTooltipState,
+      simplerEnglish: cached.simplerEnglish,
+      backupChinese: cached.backupChinese,
+      learningPoint: cached.learningPoint,
+      loading: false,
+      hasApiKey: true,
+    };
+    renderSentenceSelectionTooltip();
+    reposition();
+    return;
+  }
+
+  try {
+    const result = await sendMessage({
+      type: "explainSentence",
+      sentence,
+    }) as SentenceAssistResult;
+    sentenceAssistCache.set(cacheKey, result);
+    if (!sentenceTooltipState || sentenceTooltipState.sentence !== sentence || requestId !== sentenceTooltipRequestId) return;
+    sentenceTooltipState = {
+      ...sentenceTooltipState,
+      simplerEnglish: result.simplerEnglish,
+      backupChinese: result.backupChinese,
+      learningPoint: result.learningPoint,
+      loading: false,
+      hasApiKey: true,
+    };
+  } catch {
+    if (!sentenceTooltipState || sentenceTooltipState.sentence !== sentence || requestId !== sentenceTooltipRequestId) return;
+    sentenceTooltipState = { ...sentenceTooltipState, loading: false, hasApiKey: true };
+  }
+
+  renderSentenceSelectionTooltip();
+  reposition();
+}
+
+async function enrichTooltipWithLLM(input: {
+  requestId: number;
+  word: string;
+  context: string;
+  chineseHint: string;
+  reposition: () => void;
+}): Promise<void> {
+  if (!hasApiKeyConfigured && !(await refreshApiKeyConfigured())) return;
+
+  const cacheKey = `${input.word.toLowerCase()}::${input.context}`;
+  const cached = wordAssistCache.get(cacheKey);
+  if (cached) {
+    if (!tooltipState || input.requestId !== tooltipRequestId) return;
+    tooltipState = {
+      ...tooltipState,
+      phonetic: cached.phonetic,
+      simpleEnglish: cached.simpleEnglish,
+      chineseHint: cached.chineseHint || input.chineseHint,
+      example: cached.example,
+      loading: false,
+      hasApiKey: true,
+      requestFailed: false,
+    };
+    renderTooltip();
+    input.reposition();
+    return;
+  }
+
+  try {
+    const result = await sendMessage({
+      type: "explainWord",
+      word: input.word,
+      sentence: input.context,
+      chinese_hint: input.chineseHint,
+    }) as WordAssistResult;
+
+    wordAssistCache.set(cacheKey, result);
+    if (!tooltipState || input.requestId !== tooltipRequestId) return;
+    tooltipState = {
+      ...tooltipState,
+      phonetic: result.phonetic,
+      simpleEnglish: result.simpleEnglish,
+      chineseHint: result.chineseHint || input.chineseHint,
+      example: result.example,
+      loading: false,
+      hasApiKey: true,
+      requestFailed: false,
+    };
+  } catch {
+    if (!tooltipState || input.requestId !== tooltipRequestId) return;
+    tooltipState = {
+      ...tooltipState,
+      loading: false,
+      hasApiKey: true,
+      requestFailed: true,
+    };
+  }
+
+  renderTooltip();
+  input.reposition();
+}
+
+function getSelectionContext(selection: Selection): string {
+  const node = selection.anchorNode;
+  const element =
+    node?.nodeType === Node.ELEMENT_NODE
+      ? node as Element
+      : node?.parentElement ?? null;
+  const container = element?.closest?.("[data-original], p, li, blockquote, article, div");
+  return container?.getAttribute("data-original") || container?.textContent?.trim() || "";
+}
+
+function renderTooltip(): void {
+  if (!tooltipEl || !tooltipState) return;
+  tooltipEl.className = "enlearn-tooltip";
+  const isMastered = knownWords.has(tooltipState.word.toLowerCase());
+  tooltipEl.innerHTML = renderWordAssistTooltip(tooltipState, isMastered);
+}
+
+function renderSentenceSelectionTooltip(): void {
+  if (!tooltipEl || !sentenceTooltipState) return;
+  tooltipEl.className = "enlearn-tooltip enlearn-tooltip-sentence";
+  tooltipEl.innerHTML = `<div class="enlearn-sentence-assist enlearn-sentence-assist-floating">${renderSentenceAssistCard(sentenceTooltipState)}</div>`;
+}
+
+function positionTooltipByRect(anchorRect: DOMRect): void {
+  if (!tooltipEl) return;
+  const tipRect = tooltipEl.getBoundingClientRect();
+
+  let left = anchorRect.left + anchorRect.width / 2 - tipRect.width / 2;
+  let top = anchorRect.top - tipRect.height - 8;
+
+  if (left < 8) left = 8;
+  if (left + tipRect.width > window.innerWidth - 8) {
+    left = window.innerWidth - 8 - tipRect.width;
+  }
+  if (top < 8) {
+    top = anchorRect.bottom + 8;
+  }
+
+  tooltipEl.style.left = `${left}px`;
+  tooltipEl.style.top = `${top}px`;
+}
+
+function speakBritish(text: string): void {
+  const synth = window.speechSynthesis;
+  if (!synth || !text.trim()) return;
+
+  synth.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  const config = getSpeechUtteranceConfig(text, synth.getVoices());
+  utterance.lang = config.lang;
+  utterance.rate = config.rate;
+  utterance.pitch = config.pitch;
+  utterance.volume = config.volume;
+  if (config.voice) utterance.voice = config.voice;
+  synth.speak(utterance);
+}
+
+function createSentenceAssistElement(sentence: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "enlearn-sentence-assist";
+  sentenceAssistCardState.set(el, {
+    sentence,
+    simplerEnglish: "",
+    backupChinese: "",
+    learningPoint: "",
+    chineseExpanded: false,
+    learningPointExpanded: false,
+    loading: hasApiKeyConfigured,
+    hasApiKey: hasApiKeyConfigured,
+  });
+  renderSentenceAssistElement(el);
+  el.addEventListener("click", onSentenceAssistClick);
+  return el;
+}
+
+function renderSentenceAssistElement(el: HTMLElement): void {
+  const state = sentenceAssistCardState.get(el);
+  if (!state) return;
+  el.innerHTML = renderSentenceAssistCard(state);
+}
+
+function updateSentenceAssistElement(
+  el: HTMLElement,
+  patch: Partial<SentenceAssistCardState>
+): void {
+  const prev = sentenceAssistCardState.get(el);
+  if (!prev) return;
+  sentenceAssistCardState.set(el, { ...prev, ...patch });
+  renderSentenceAssistElement(el);
+}
+
+function insertSentenceAssistElement(anchorEl: Element, assistEl: HTMLElement): void {
+  const next = anchorEl.nextElementSibling;
+  if (next?.classList.contains("enlearn-sentence-assist")) {
+    next.remove();
+  }
+  anchorEl.parentNode?.insertBefore(assistEl, anchorEl.nextSibling);
+}
+
+function onSentenceAssistClick(e: MouseEvent): void {
+  const card = e.currentTarget as HTMLElement | null;
+  if (!card) return;
+
+  const audioBtn = (e.target as Element).closest?.(".enlearn-sentence-assist-audio");
+  if (audioBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const state = sentenceAssistCardState.get(card);
+    if (state) speakBritish(state.sentence);
+    return;
+  }
+
+  const toggleBtn = (e.target as Element).closest?.(".enlearn-sentence-assist-toggle");
+  const state = sentenceAssistCardState.get(card);
+  if (toggleBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!state?.backupChinese) return;
+    updateSentenceAssistElement(card, { chineseExpanded: !state.chineseExpanded });
+    return;
+  }
+
+  const learningBtn = (e.target as Element).closest?.(".enlearn-sentence-assist-learning-toggle");
+  if (!learningBtn) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+  if (!state?.learningPoint) return;
+  updateSentenceAssistElement(card, { learningPointExpanded: !state.learningPointExpanded });
+}
+
+async function enrichSentenceAssistElement(
+  el: HTMLElement,
+  sentence: string
+): Promise<void> {
+  if (!hasApiKeyConfigured) {
+    updateSentenceAssistElement(el, { loading: false, hasApiKey: false });
+    return;
+  }
+
+  const cacheKey = sentence.trim();
+  const cached = sentenceAssistCache.get(cacheKey);
+  if (cached) {
+    updateSentenceAssistElement(el, {
+      simplerEnglish: cached.simplerEnglish,
+      backupChinese: cached.backupChinese,
+      learningPoint: cached.learningPoint,
+      loading: false,
+      hasApiKey: true,
+    });
+    return;
+  }
+
+  try {
+    const result = await sendMessage({
+      type: "explainSentence",
+      sentence,
+    }) as SentenceAssistResult;
+
+    sentenceAssistCache.set(cacheKey, result);
+    updateSentenceAssistElement(el, {
+      simplerEnglish: result.simplerEnglish,
+      backupChinese: result.backupChinese,
+      learningPoint: result.learningPoint,
+      loading: false,
+      hasApiKey: true,
+    });
+  } catch {
+    updateSentenceAssistElement(el, { loading: false, hasApiKey: true });
+  }
 }
 
 function onTriggerParentHover(e: MouseEvent): void {
@@ -186,6 +730,7 @@ async function init(): Promise<void> {
   }
 
   config = await sendMessage({ type: "getConfig" }) as BaitConfig;
+  await refreshApiKeyConfigured();
 
   const response = await sendMessage({ type: "checkActive" }) as { active: boolean };
   if (response.active) {
@@ -261,6 +806,9 @@ function pauseProcessing(): void {
   document.querySelectorAll(".enlearn-chunked").forEach(el => {
     (el as HTMLElement).style.setProperty("display", "none", "important");
   });
+  document.querySelectorAll(".enlearn-sentence-assist").forEach(el => {
+    (el as HTMLElement).style.setProperty("display", "none", "important");
+  });
   document.querySelectorAll(".enlearn-trigger").forEach(el => {
     (el as HTMLElement).style.setProperty("display", "none", "important");
   });
@@ -282,6 +830,9 @@ function resumeProcessing(): void {
     el.classList.remove("enlearn-was-hidden");
   });
   document.querySelectorAll(".enlearn-chunked").forEach(el => {
+    (el as HTMLElement).style.removeProperty("display");
+  });
+  document.querySelectorAll(".enlearn-sentence-assist").forEach(el => {
     (el as HTMLElement).style.removeProperty("display");
   });
   document.querySelectorAll(".enlearn-trigger").forEach(el => {
@@ -323,6 +874,11 @@ function reprocessPage(): void {
 
 function onStorageChanged(changes: { [key: string]: chrome.storage.StorageChange }): void {
   let needReprocess = false;
+
+  if (changes.llm?.newValue) {
+    config.llm = migrateLLMConfig(changes.llm.newValue);
+    hasApiKeyConfigured = !!resolveLLMConfig(config.llm).apiKey;
+  }
 
   if (changes.chunkIntensity) {
     config.chunkIntensity = changes.chunkIntensity.newValue as number;
@@ -476,6 +1032,7 @@ function insertChunkedElement(
 function restoreProcessedElements(): void {
   // 移除所有分块元素
   document.querySelectorAll(".enlearn-chunked").forEach(el => el.remove());
+  document.querySelectorAll(".enlearn-sentence-assist").forEach(el => el.remove());
 
   // 恢复隐藏的原始元素（清除 inline style + class）
   document.querySelectorAll(".enlearn-original-hidden").forEach(el => {
@@ -1048,6 +1605,9 @@ function addManualTrigger(el: Element, text: string): void {
         if (chunkedEl) {
           copyFontStyles(el, chunkedEl);
           insertChunkedElement(el, chunkedEl);
+          const sentenceAssistEl = createSentenceAssistElement(text);
+          insertSentenceAssistElement(chunkedEl, sentenceAssistEl);
+          void enrichSentenceAssistElement(sentenceAssistEl, text);
           btn.remove();
 
           // 手动触发 → 标记 manual: true
@@ -1171,10 +1731,12 @@ async function flushProcessQueue(): Promise<void> {
 function restoreSingleElement(el: Element): void {
   if (!el.classList.contains("enlearn-original-hidden")) return;
 
-  // 移除分块兄弟
-  const next = el.nextElementSibling;
-  if (next?.classList.contains("enlearn-chunked")) {
-    next.remove();
+  // 移除分块和句子辅助兄弟
+  let next = el.nextElementSibling;
+  while (next && (next.classList.contains("enlearn-chunked") || next.classList.contains("enlearn-sentence-assist"))) {
+    const toRemove = next;
+    next = next.nextElementSibling;
+    toRemove.remove();
   }
 
   // 恢复原始元素显示
@@ -1302,9 +1864,7 @@ function setupMutationObserver(): void {
 // ========== 通信 ==========
 
 function sendMessage(message: unknown): Promise<unknown> {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(message, resolve);
-  });
+  return sendRuntimeMessage(message);
 }
 
 // ========== 启动 ==========

@@ -9,17 +9,33 @@
  * 5. 管理配置和站点开关
  */
 
-import type { Message, BaitConfig, ChunkResult, PatternKey } from "../shared/types.ts";
+import type { Message, BaitConfig, ChunkResult, PatternKey, SentenceAssistResult, WordAssistResult } from "../shared/types.ts";
 import { DEFAULT_CONFIG, resolveLLMConfig, migrateLLMConfig } from "../shared/types.ts";
 import { getCachedBatch, setCacheBatch } from "../shared/cache.ts";
-import { chunkSentences, analyzeSentenceFull } from "../shared/llm-adapter.ts";
+import {
+  buildSentenceAssistCacheKey,
+  buildWordAssistCacheKey,
+  getCachedSentenceAssist,
+  getCachedWordAssist,
+  setCachedSentenceAssist,
+  setCachedWordAssist,
+} from "../shared/assist-cache.ts";
+import {
+  chunkSentences,
+  analyzeSentenceFull,
+  explainSentenceWithLLM,
+  explainWordWithLLM,
+  hasUsefulWordAssistResult,
+} from "../shared/llm-adapter.ts";
+import { getTabByIdSafe, sendMessageToTabSafe, setActionIconSafe } from "../shared/tab-runtime.ts";
 import { openDB as openDataDB, pendingSentenceDAO, learningRecordDAO } from "../shared/db.ts";
 
 // ========== 配置管理 ==========
 
-async function getConfig(): Promise<BaitConfig> {
-  const keys = Object.keys(DEFAULT_CONFIG);
-  const items = await chrome.storage.sync.get(keys);
+let cachedConfig: BaitConfig | null = null;
+let configLoadPromise: Promise<BaitConfig> | null = null;
+
+function normalizeConfig(items: Record<string, unknown>): BaitConfig {
   const config = items as unknown as BaitConfig;
 
   if (!Array.isArray(config.disabledSites)) {
@@ -28,10 +44,27 @@ async function getConfig(): Promise<BaitConfig> {
   if (!config.chunkGranularity) {
     config.chunkGranularity = "fine";
   }
-  // 兼容旧格式 + 新格式
   config.llm = migrateLLMConfig(config.llm);
 
   return config;
+}
+
+async function getConfig(): Promise<BaitConfig> {
+  if (cachedConfig) return cachedConfig;
+  if (configLoadPromise) return configLoadPromise;
+
+  const keys = Object.keys(DEFAULT_CONFIG);
+  configLoadPromise = chrome.storage.sync
+    .get(keys)
+    .then((items) => {
+      cachedConfig = normalizeConfig(items as Record<string, unknown>);
+      return cachedConfig;
+    })
+    .finally(() => {
+      configLoadPromise = null;
+    });
+
+  return configLoadPromise;
 }
 
 async function updateConfig(partial: Partial<BaitConfig>): Promise<BaitConfig> {
@@ -41,8 +74,15 @@ async function updateConfig(partial: Partial<BaitConfig>): Promise<BaitConfig> {
     updated.llm = { ...current.llm, ...partial.llm };
   }
   await chrome.storage.sync.set(updated as Record<string, unknown>);
+  cachedConfig = updated;
   return updated;
 }
+
+chrome.storage.onChanged.addListener((_changes, areaName) => {
+  if (areaName === "sync") {
+    cachedConfig = null;
+  }
+});
 
 // ========== 站点开关 ==========
 
@@ -80,7 +120,7 @@ async function toggleSite(hostname: string): Promise<{ enabled: boolean; disable
 async function updateIcon(tabId: number, active: boolean): Promise<void> {
   const suffix = active ? "-on" : "";
   try {
-    await chrome.action.setIcon({
+    await setActionIconSafe({
       path: {
         16: `icons/icon16${suffix}.png`,
         48: `icons/icon48${suffix}.png`,
@@ -96,6 +136,8 @@ async function updateIcon(tabId: number, active: boolean): Promise<void> {
 // ========== Tab 暂停状态 ==========
 
 const pausedTabs = new Set<number>();
+const pendingWordAssistRequests = new Map<string, Promise<WordAssistResult>>();
+const pendingSentenceAssistRequests = new Map<string, Promise<SentenceAssistResult>>();
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   pausedTabs.delete(tabId);
@@ -270,9 +312,19 @@ async function processAnalysisBatch(sentenceIds: string[]): Promise<void> {
 
 chrome.runtime.onMessage.addListener(
   (message: Message, sender, sendResponse) => {
-    handleMessage(message, sender).then((result) => {
-      try { sendResponse(result); } catch { /* tab 可能已关闭 */ }
-    });
+    handleMessage(message, sender)
+      .then((result) => {
+        try { sendResponse(result); } catch { /* tab 可能已关闭 */ }
+      })
+      .catch((error) => {
+        try {
+          sendResponse({
+            error: error instanceof Error ? error.message : "Unknown background error",
+          });
+        } catch {
+          /* sender 可能已销毁 */
+        }
+      });
     return true;
   }
 );
@@ -328,7 +380,7 @@ async function handleMessage(
           const tabHost = getHostname(tab.url);
           if (tabHost === hostname) {
             updateIcon(tab.id, result.enabled);
-            chrome.tabs.sendMessage(tab.id, {
+            sendMessageToTabSafe(tab.id, {
               type: result.enabled ? "activate" : "deactivate",
             }).catch(() => {});
           }
@@ -342,7 +394,7 @@ async function handleMessage(
       const { tabId } = message;
       pausedTabs.add(tabId);
       updateIcon(tabId, false);
-      chrome.tabs.sendMessage(tabId, { type: "pause" }).catch(() => {});
+      sendMessageToTabSafe(tabId, { type: "pause" }).catch(() => {});
       return { ok: true };
     }
 
@@ -350,7 +402,7 @@ async function handleMessage(
       const { tabId } = message;
       pausedTabs.delete(tabId);
       updateIcon(tabId, true);
-      chrome.tabs.sendMessage(tabId, { type: "resume" }).catch(() => {});
+      sendMessageToTabSafe(tabId, { type: "resume" }).catch(() => {});
       return { ok: true };
     }
 
@@ -366,6 +418,73 @@ async function handleMessage(
       const cfg = await getConfig();
       const llmCfg = resolveLLMConfig(cfg.llm);
       return { hasKey: !!llmCfg.apiKey };
+    }
+
+    case "explainWord": {
+      const cfg = await getConfig();
+      const llmCfg = resolveLLMConfig(cfg.llm);
+      if (!llmCfg.apiKey) {
+        return {
+          phonetic: "",
+          simpleEnglish: "",
+          chineseHint: message.chinese_hint ?? "",
+          example: "",
+        };
+      }
+      const input = {
+        word: message.word,
+        sentence: message.sentence,
+        chineseHint: message.chinese_hint,
+      };
+      const cached = await getCachedWordAssist(input, llmCfg);
+      if (cached) return cached;
+
+      const cacheKey = buildWordAssistCacheKey(input, llmCfg);
+      let pending = pendingWordAssistRequests.get(cacheKey);
+      if (!pending) {
+        pending = explainWordWithLLM(input, llmCfg)
+          .then(async (result) => {
+            if (!hasUsefulWordAssistResult(result)) {
+              throw new Error("Word assist response did not include an English explanation");
+            }
+            await setCachedWordAssist(input, llmCfg, result);
+            return result;
+          })
+          .finally(() => {
+            pendingWordAssistRequests.delete(cacheKey);
+          });
+        pendingWordAssistRequests.set(cacheKey, pending);
+      }
+      return pending;
+    }
+
+    case "explainSentence": {
+      const cfg = await getConfig();
+      const llmCfg = resolveLLMConfig(cfg.llm);
+      if (!llmCfg.apiKey) {
+        return {
+          simplerEnglish: "",
+          backupChinese: "",
+          learningPoint: "",
+        };
+      }
+      const cached = await getCachedSentenceAssist(message.sentence, llmCfg);
+      if (cached) return cached;
+
+      const cacheKey = buildSentenceAssistCacheKey(message.sentence, llmCfg);
+      let pending = pendingSentenceAssistRequests.get(cacheKey);
+      if (!pending) {
+        pending = explainSentenceWithLLM(message.sentence, llmCfg)
+          .then(async (result) => {
+            await setCachedSentenceAssist(message.sentence, llmCfg, result);
+            return result;
+          })
+          .finally(() => {
+            pendingSentenceAssistRequests.delete(cacheKey);
+          });
+        pendingSentenceAssistRequests.set(cacheKey, pending);
+      }
+      return pending;
     }
 
     case "getConfig":
@@ -406,8 +525,8 @@ async function handleMessage(
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
-    const tab = await chrome.tabs.get(activeInfo.tabId);
-    if (tab.url) {
+    const tab = await getTabByIdSafe(activeInfo.tabId);
+    if (tab?.url) {
       const hostname = getHostname(tab.url);
       const siteOn = hostname ? await isSiteEnabled(hostname) : false;
       const active = siteOn && !pausedTabs.has(activeInfo.tabId);

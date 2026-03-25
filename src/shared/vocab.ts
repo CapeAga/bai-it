@@ -157,6 +157,13 @@ function lookupDictionary(word: string): string | null {
   return null;
 }
 
+export function lookupDefinitionForSelection(text: string): string | null {
+  if (!dictMap) return null;
+  const direct = dictMap.get(text.toLowerCase());
+  if (direct) return direct;
+  return lookupDictionary(text);
+}
+
 /**
  * 标注文本中的生词
  *

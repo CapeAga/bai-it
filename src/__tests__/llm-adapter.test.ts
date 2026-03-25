@@ -115,6 +115,11 @@ describe("buildOpenAIRequest", () => {
     expect(headers.Authorization).toBe("Bearer sk-test-key-456");
     expect(headers["Content-Type"]).toBe("application/json");
   });
+
+  it("支持为短解释请求设置更紧的输出上限", () => {
+    const { body } = buildOpenAIRequest("test prompt", openaiConfig, { maxOutputTokens: 180 });
+    expect(body.max_tokens).toBe(180);
+  });
 });
 
 // ========== 响应解析 — 正常 ==========

@@ -11,6 +11,7 @@
  */
 import puppeteer from "puppeteer";
 import path from "path";
+import { getPuppeteerLaunchOptions } from "../../scripts/puppeteer-launch.mjs";
 
 const extensionPath = path.resolve("dist");
 const userDataDir = `${process.env.HOME}/.chrome-debug-profile`;
@@ -25,13 +26,10 @@ try {
   console.log("启动 Chrome + 加载扩展（使用已登录 profile）...");
 
   const browser = await puppeteer.launch({
-    headless: false,
-    args: [
-      `--disable-extensions-except=${extensionPath}`,
-      `--load-extension=${extensionPath}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-    ],
+    ...getPuppeteerLaunchOptions({
+      headless: false,
+      extensionPath,
+    }),
     userDataDir,
   });
 

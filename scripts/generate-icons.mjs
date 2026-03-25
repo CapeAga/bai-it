@@ -12,6 +12,7 @@ import puppeteer from 'puppeteer';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getPuppeteerLaunchOptions } from './puppeteer-launch.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ICONS_DIR = path.join(__dirname, '..', 'icons');
@@ -81,7 +82,11 @@ function buildHtml({ size, fontSize, dotSize, dotStroke, dotOffset, showDot }) {
 async function generate() {
   await mkdir(ICONS_DIR, { recursive: true });
 
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch(
+    getPuppeteerLaunchOptions({
+      headless: true,
+    }),
+  );
   const page = await browser.newPage();
 
   for (const sizeConfig of SIZES) {

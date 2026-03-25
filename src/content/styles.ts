@@ -73,37 +73,70 @@ export const ENLEARN_STYLES = `
 .enlearn-tooltip {
   position: fixed;
   display: none;
-  background: #1a1a2e;
+  background: rgba(16, 16, 18, 0.96);
   color: #e2e8f0;
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
   font-size: 13px;
   line-height: 1.5;
-  white-space: nowrap;
   z-index: 2147483647;
   pointer-events: auto;
   box-shadow: 0 4px 16px rgba(0,0,0,0.25);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   display: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 220px;
+  max-width: 320px;
+  white-space: normal;
+}
+
+.enlearn-tooltip.enlearn-tooltip-sentence {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  min-width: 260px;
+  max-width: 380px;
+}
+
+.enlearn-tooltip-head {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 
-.enlearn-tooltip-def {
-  display: inline;
+.enlearn-tooltip-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
+.enlearn-tooltip-word {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.enlearn-tooltip-phonetic {
+  font-size: 12px;
+  color: rgba(148, 163, 184, 0.92);
+}
+
+.enlearn-tooltip-audio,
 .enlearn-tooltip-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  gap: 6px;
+  min-width: 24px;
+  height: 24px;
   padding: 0;
-  margin-left: 2px;
   background: transparent;
   border: 1.5px solid rgba(255,255,255,0.12);
-  border-radius: 50%;
+  border-radius: 999px;
   color: rgba(255,255,255,0.25);
   font-size: 11px;
   cursor: pointer;
@@ -111,12 +144,226 @@ export const ENLEARN_STYLES = `
   font-family: inherit;
   line-height: 1;
   flex-shrink: 0;
+  padding-inline: 8px;
+}
+
+.enlearn-tooltip-audio:hover {
+  background: rgba(96, 165, 250, 0.14);
+  border-color: rgba(96, 165, 250, 0.45);
+  color: #93c5fd;
+}
+
+.enlearn-tooltip-audio {
+  min-width: 64px;
+  height: 30px;
+  padding-inline: 10px;
+  background: rgba(96, 165, 250, 0.1);
+  border-color: rgba(96, 165, 250, 0.24);
+  color: #dbeafe;
 }
 
 .enlearn-tooltip-btn:hover {
   background: rgba(34,197,94,0.15);
   border-color: rgba(34,197,94,0.5);
   color: #4ade80;
+}
+
+.enlearn-tooltip-section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.enlearn-tooltip-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.enlearn-tooltip-en {
+  color: #f8fafc;
+}
+
+.enlearn-tooltip-zh {
+  color: #cbd5e1;
+}
+
+.enlearn-tooltip-example {
+  color: rgba(226, 232, 240, 0.82);
+  font-size: 12px;
+}
+
+.enlearn-tooltip-loading,
+.enlearn-tooltip-fallback {
+  color: rgba(148, 163, 184, 0.9);
+  font-size: 12px;
+}
+
+.enlearn-tooltip-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.enlearn-tooltip-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  background: rgba(96, 165, 250, 0.08);
+  color: #dbeafe;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.enlearn-tooltip-toggle:hover {
+  background: rgba(96, 165, 250, 0.16);
+  border-color: rgba(96, 165, 250, 0.36);
+  color: #eff6ff;
+}
+
+.enlearn-sentence-assist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: #0f172a;
+  font-family: inherit;
+}
+
+.enlearn-sentence-assist-floating {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(148, 163, 184, 0.24);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+  backdrop-filter: blur(10px);
+}
+
+.enlearn-sentence-assist-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.enlearn-sentence-assist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.enlearn-sentence-assist-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(71, 85, 105, 0.8);
+}
+
+.enlearn-sentence-assist-text,
+.enlearn-sentence-assist-chinese,
+.enlearn-sentence-assist-note,
+.enlearn-sentence-assist-hint,
+.enlearn-sentence-assist-loading {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #0f172a;
+}
+
+.enlearn-sentence-assist-note,
+.enlearn-sentence-assist-hint,
+.enlearn-sentence-assist-loading {
+  color: #475569;
+}
+
+.enlearn-sentence-assist-audio,
+.enlearn-sentence-assist-toggle,
+.enlearn-sentence-assist-learning-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 999px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.enlearn-sentence-assist-audio {
+  min-width: 72px;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+}
+
+.enlearn-sentence-assist-toggle {
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  background: rgba(255,255,255,0.65);
+  color: rgba(30, 41, 59, 0.82);
+}
+
+.enlearn-sentence-assist-learning-toggle {
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  border: 1px dashed rgba(100, 116, 139, 0.28);
+  background: rgba(148, 163, 184, 0.06);
+  color: #475569;
+}
+
+.enlearn-sentence-assist-audio:hover {
+  background: rgba(37, 99, 235, 0.14);
+  border-color: rgba(37, 99, 235, 0.34);
+  color: #1e40af;
+}
+
+.enlearn-sentence-assist-toggle:hover {
+  background: rgba(37, 99, 235, 0.08);
+  border-color: rgba(37, 99, 235, 0.28);
+  color: #1d4ed8;
+}
+
+.enlearn-sentence-assist-learning-toggle:hover {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(100, 116, 139, 0.36);
+  color: #334155;
+}
+
+.enlearn-audio-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.enlearn-audio-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.enlearn-audio-text {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 /* 手动触发按钮 — inline 显示，不会被 overflow:hidden 裁剪 */
@@ -208,6 +455,7 @@ export const ENLEARN_STYLES = `
 
 /* 暂停状态 — 显示原文、隐藏分块 */
 body.enlearn-paused .enlearn-chunked { display: none !important; }
+body.enlearn-paused .enlearn-sentence-assist { display: none !important; }
 body.enlearn-paused .enlearn-trigger { display: none !important; }
 body.enlearn-paused .enlearn-original-hidden { display: block !important; }
 
@@ -231,9 +479,70 @@ body.enlearn-paused .enlearn-original-hidden { display: block !important; }
     box-shadow: 0 4px 20px rgba(0,0,0,0.4);
   }
 
+  .enlearn-tooltip-audio,
   .enlearn-tooltip-btn {
     border-color: rgba(255,255,255,0.1);
     color: rgba(255,255,255,0.2);
+  }
+
+  .enlearn-tooltip-toggle {
+    background: rgba(96, 165, 250, 0.12);
+    border-color: rgba(96, 165, 250, 0.24);
+    color: #dbeafe;
+  }
+
+  .enlearn-tooltip-audio {
+    background: rgba(96, 165, 250, 0.12);
+    border-color: rgba(96, 165, 250, 0.28);
+    color: #dbeafe;
+  }
+
+  .enlearn-sentence-assist {
+    background: rgba(15, 23, 42, 0.55);
+    border-color: rgba(148, 163, 184, 0.18);
+    color: #e5eefb;
+  }
+
+  .enlearn-sentence-assist-floating {
+    background: rgba(15, 23, 42, 0.94);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+  }
+
+  .enlearn-sentence-assist-label,
+  .enlearn-sentence-assist-text,
+  .enlearn-sentence-assist-chinese,
+  .enlearn-sentence-assist-note,
+  .enlearn-sentence-assist-hint,
+  .enlearn-sentence-assist-loading {
+    color: rgba(226, 232, 240, 0.9);
+  }
+
+  .enlearn-sentence-assist-audio,
+  .enlearn-sentence-assist-toggle,
+  .enlearn-sentence-assist-learning-toggle {
+    background: rgba(15, 23, 42, 0.42);
+    border-color: rgba(148, 163, 184, 0.18);
+    color: rgba(226, 232, 240, 0.84);
+  }
+
+  .enlearn-sentence-assist-audio {
+    background: rgba(96, 165, 250, 0.16);
+    border-color: rgba(96, 165, 250, 0.28);
+    color: #dbeafe;
+  }
+
+  .enlearn-sentence-assist-learning-toggle {
+    border-style: dashed;
+    background: rgba(148, 163, 184, 0.08);
+    color: rgba(226, 232, 240, 0.72);
+  }
+
+  .enlearn-sentence-assist-audio:hover,
+  .enlearn-sentence-assist-toggle:hover,
+  .enlearn-sentence-assist-learning-toggle:hover {
+    background: rgba(96, 165, 250, 0.14);
+    border-color: rgba(96, 165, 250, 0.32);
+    color: #bfdbfe;
   }
 
   .enlearn-trigger {

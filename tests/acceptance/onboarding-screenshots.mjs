@@ -5,6 +5,7 @@
 import puppeteer from "puppeteer";
 import path from "path";
 import fs from "fs";
+import { getPuppeteerLaunchOptions } from "../../scripts/puppeteer-launch.mjs";
 
 const extensionPath = path.resolve("dist");
 const screenshotDir = path.resolve("tests/screenshots/onboarding");
@@ -17,17 +18,14 @@ const TAB_LABELS = { dashboard: "总览", review: "每日回味", sentences: "�
 try {
   console.log("启动 Chrome + 加载扩展...\n");
 
-  const browser = await puppeteer.launch({
-    headless: false,
-    args: [
-      `--disable-extensions-except=${extensionPath}`,
-      `--load-extension=${extensionPath}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--window-size=1280,900",
-    ],
-    defaultViewport: { width: 1280, height: 900 },
-  });
+  const browser = await puppeteer.launch(
+    getPuppeteerLaunchOptions({
+      headless: false,
+      extensionPath,
+      defaultViewport: { width: 1280, height: 900 },
+      extraArgs: ["--window-size=1280,900"],
+    }),
+  );
 
   const swTarget = await browser.waitForTarget(
     t => t.type() === "service_worker" && t.url().includes("background.js"),
