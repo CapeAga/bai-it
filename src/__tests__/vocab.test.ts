@@ -4,6 +4,7 @@ import {
   loadDictionary,
   annotateWords,
   isCommonWord,
+  lookupDefinitionForSelection,
   toNewWordsFormat,
   resetAll,
 } from "../shared/vocab";
@@ -144,6 +145,16 @@ describe("已知词跳过", () => {
 // ========== 辅助功能 ==========
 
 describe("辅助功能", () => {
+  it("lookupDefinitionForSelection returns a definition for common words too", () => {
+    const result = lookupDefinitionForSelection("algorithm");
+    expect(result).toContain("算法");
+  });
+
+  it("lookupDefinitionForSelection resolves stems", () => {
+    const result = lookupDefinitionForSelection("algorithms");
+    expect(result).toContain("算法");
+  });
+
   it("toNewWordsFormat 正确转换", () => {
     const annotations = annotateWords(
       "The algorithm uses immutable data.",

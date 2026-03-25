@@ -12,6 +12,7 @@
 import puppeteer from "puppeteer";
 import path from "path";
 import fs from "fs";
+import { getPuppeteerLaunchOptions } from "../../scripts/puppeteer-launch.mjs";
 
 const extensionPath = path.resolve("dist");
 const screenshotDir = path.resolve("tests/screenshots");
@@ -28,17 +29,14 @@ fs.mkdirSync(screenshotDir, { recursive: true });
 try {
   console.log("启动 Chrome + 加载扩展...\n");
 
-  const browser = await puppeteer.launch({
-    headless: false,
-    args: [
-      `--disable-extensions-except=${extensionPath}`,
-      `--load-extension=${extensionPath}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--window-size=1280,900",
-    ],
-    defaultViewport: { width: 1280, height: 900 },
-  });
+  const browser = await puppeteer.launch(
+    getPuppeteerLaunchOptions({
+      headless: false,
+      extensionPath,
+      defaultViewport: { width: 1280, height: 900 },
+      extraArgs: ["--window-size=1280,900"],
+    }),
+  );
 
   // 等 Service Worker 就绪，获取扩展 ID
   const swTarget = await browser.waitForTarget(

@@ -98,6 +98,8 @@ export function migrateLLMConfig(raw: unknown): LLMMultiConfig {
 export type Message =
   | { type: "chunk"; sentences: string[]; source_url?: string }
   | { type: "hasApiKey" }
+  | { type: "explainWord"; word: string; sentence?: string; chinese_hint?: string }
+  | { type: "explainSentence"; sentence: string }
   | { type: "getConfig" }
   | { type: "updateConfig"; config: Partial<BaitConfig> }
   | { type: "checkActive" }
@@ -146,6 +148,19 @@ export interface FullAnalysisResult {
   expression_tips: string;
   new_words: { word: string; definition: string }[];
   is_worth_practicing: boolean;
+}
+
+export interface WordAssistResult {
+  simpleEnglish: string;
+  chineseHint: string;
+  example: string;
+  phonetic: string;
+}
+
+export interface SentenceAssistResult {
+  simplerEnglish: string;
+  backupChinese: string;
+  learningPoint: string;
 }
 
 // ========== IndexedDB 数据层（10 张表） ==========

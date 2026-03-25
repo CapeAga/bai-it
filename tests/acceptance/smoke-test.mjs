@@ -8,6 +8,7 @@
  */
 import puppeteer from "puppeteer";
 import path from "path";
+import { getPuppeteerLaunchOptions } from "../../scripts/puppeteer-launch.mjs";
 
 const extensionPath = path.resolve("dist");
 
@@ -20,15 +21,12 @@ function fail(msg) { failed++; console.log(`  ✗ ${msg}`); }
 try {
   console.log("启动 Chrome + 加载扩展...");
 
-  const browser = await puppeteer.launch({
-    headless: false,
-    args: [
-      `--disable-extensions-except=${extensionPath}`,
-      `--load-extension=${extensionPath}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-    ],
-  });
+  const browser = await puppeteer.launch(
+    getPuppeteerLaunchOptions({
+      headless: false,
+      extensionPath,
+    }),
+  );
 
   // 1. 检查 Service Worker 是否启动
   console.log("\n[Service Worker]");
