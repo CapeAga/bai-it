@@ -5,7 +5,7 @@ import { chunkSentences } from "../../shared/llm-adapter.ts";
 import { GlassCard } from "../components/GlassCard.tsx";
 import { PROVIDER_INFO } from "../constants.ts";
 
-const PROVIDER_KEYS: ProviderKey[] = ["gemini", "chatgpt", "deepseek", "qwen", "kimi"];
+const PROVIDER_KEYS: ProviderKey[] = ["gemini", "chatgpt", "deepseek", "qwen", "kimi", "custom"];
 
 const TEST_SENTENCE = "Although the project had been delayed by several unexpected issues, the team managed to deliver a working prototype on time.";
 
@@ -18,7 +18,7 @@ interface SettingsProps {
 export function Settings({ config, configLoading: loading, updateLLM }: SettingsProps) {
   const [activeProvider, setActiveProvider] = useState<ProviderKey>("gemini");
   const [verifyStatus, setVerifyStatus] = useState<Record<ProviderKey, "idle" | "checking" | "ok" | "error">>({
-    gemini: "idle", chatgpt: "idle", deepseek: "idle", qwen: "idle", kimi: "idle",
+    gemini: "idle", chatgpt: "idle", deepseek: "idle", qwen: "idle", kimi: "idle", custom: "idle",
   });
   const [verifyError, setVerifyError] = useState<string>("");
 
@@ -47,6 +47,14 @@ export function Settings({ config, configLoading: loading, updateLLM }: Settings
     providers[activeProvider] = { ...providers[activeProvider], model: value };
     updateLLM({ providers });
     setVerifyStatus((prev) => ({ ...prev, [activeProvider]: "idle" }));
+  }, [activeProvider, config.llm.providers, updateLLM]);
+
+  const handleBaseUrlChange = useCallback((value: string) => {
+    const providers = { ...config.llm.providers };
+    providers[activeProvider] = { ...providers[activeProvider], baseUrl: value };
+    updateLLM({ providers });
+    setVerifyStatus((prev) => ({ ...prev, [activeProvider]: "idle" }));
+    setVerifyError("");
   }, [activeProvider, config.llm.providers, updateLLM]);
 
   const handleVerify = useCallback(async () => {
@@ -137,22 +145,55 @@ export function Settings({ config, configLoading: loading, updateLLM }: Settings
             {status === "ok" ? "✓ 连接成功" : `✗ ${verifyError}`}
           </div>
         )}
+        {PROVIDER_META[activeProvider].format === "openai-compatible" && (
+          <div className="settings-row" style={{ paddingTop: 4 }}>
+            <div>
+              <div className="settings-label">自定义端点</div>
+              <div className="settings-desc">留空使用默认地址。以 / 结尾的地址会直接拼接 /chat/completions，否则拼接 /v1/chat/completions</div>
+            </div>
+            <input
+              className="settings-input"
+              type="text"
+              value={currentProviderConfig.baseUrl || ""}
+              onChange={(e) => handleBaseUrlChange(e.target.value)}
+              placeholder={PROVIDER_META[activeProvider].baseUrl}
+              style={{ width: 360 }}
+            />
+          </div>
+        )}
         <div className="settings-row" style={{ paddingTop: 4 }}>
           <div>
             <div className="settings-label">模型</div>
           </div>
-          <select
-            className="settings-select"
-            value={currentProviderConfig.model}
-            onChange={(e) => handleModelChange(e.target.value)}
-            style={{ minWidth: 180 }}
-          >
-            {providerInfo.models.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
+          {activeProvider === "custom" ? (
+            <input
+              className="settings-input"
+              type="text"
+              list="custom-model-list"
+              value={currentProviderConfig.model}
+              onChange={(e) => handleModelChange(e.target.value)}
+              placeholder="输入模型名称"
+              style={{ minWidth: 180 }}
+            />
+          ) : (
+            <select
+              className="settings-select"
+              value={currentProviderConfig.model}
+              onChange={(e) => handleModelChange(e.target.value)}
+              style={{ minWidth: 180 }}
+            >
+              {providerInfo.models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="settings-model-info">{providerInfo.hint}</div>
+        <datalist id="custom-model-list">
+          {PROVIDER_INFO.custom.models.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
       </GlassCard>
     </div>
   );
