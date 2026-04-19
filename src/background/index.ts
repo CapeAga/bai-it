@@ -93,12 +93,33 @@ async function updateIcon(tabId: number, active: boolean): Promise<void> {
   }
 }
 
-// ========== Tab 暂停状态 ==========
+// ========== Tab 激活状态（默认所有页面不启用）==========
 
-const pausedTabs = new Set<number>();
+const activeTabs = new Set<number>();
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  pausedTabs.delete(tabId);
+  activeTabs.delete(tabId);
+});
+
+// ========== 快捷键切换 ==========
+
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== "toggle-bait") return;
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url) return;
+
+  const tabId = tab.id;
+
+  if (activeTabs.has(tabId)) {
+    activeTabs.delete(tabId);
+    updateIcon(tabId, false);
+    chrome.tabs.sendMessage(tabId, { type: "deactivate" }).catch(() => {});
+  } else {
+    activeTabs.add(tabId);
+    updateIcon(tabId, true);
+    chrome.tabs.sendMessage(tabId, { type: "activate" }).catch(() => {});
+  }
 });
 
 // ========== 请求合并 ==========
@@ -310,10 +331,7 @@ async function handleMessage(
 
     case "checkActive": {
       const tabId = sender.tab?.id;
-      const tabUrl = sender.tab?.url ?? "";
-      const hostname = getHostname(tabUrl);
-      const siteOn = hostname ? await isSiteEnabled(hostname) : false;
-      const active = siteOn && !(tabId && pausedTabs.has(tabId));
+      const active = !!(tabId && activeTabs.has(tabId));
       if (tabId) updateIcon(tabId, active);
       return { active };
     }
@@ -327,10 +345,15 @@ async function handleMessage(
         if (tab.id && tab.url) {
           const tabHost = getHostname(tab.url);
           if (tabHost === hostname) {
-            updateIcon(tab.id, result.enabled);
-            chrome.tabs.sendMessage(tab.id, {
-              type: result.enabled ? "activate" : "deactivate",
-            }).catch(() => {});
+            if (result.enabled) {
+              activeTabs.add(tab.id);
+              updateIcon(tab.id, true);
+              chrome.tabs.sendMessage(tab.id, { type: "activate" }).catch(() => {});
+            } else {
+              activeTabs.delete(tab.id);
+              updateIcon(tab.id, false);
+              chrome.tabs.sendMessage(tab.id, { type: "deactivate" }).catch(() => {});
+            }
           }
         }
       }
@@ -338,28 +361,41 @@ async function handleMessage(
       return { enabled: result.enabled, disabledSites: result.disabledSites };
     }
 
+    case "toggleTab": {
+      const { tabId } = message;
+      if (activeTabs.has(tabId)) {
+        activeTabs.delete(tabId);
+        updateIcon(tabId, false);
+        chrome.tabs.sendMessage(tabId, { type: "deactivate" }).catch(() => {});
+        return { active: false };
+      } else {
+        activeTabs.add(tabId);
+        updateIcon(tabId, true);
+        chrome.tabs.sendMessage(tabId, { type: "activate" }).catch(() => {});
+        return { active: true };
+      }
+    }
+
     case "pauseTab": {
       const { tabId } = message;
-      pausedTabs.add(tabId);
+      activeTabs.delete(tabId);
       updateIcon(tabId, false);
-      chrome.tabs.sendMessage(tabId, { type: "pause" }).catch(() => {});
+      chrome.tabs.sendMessage(tabId, { type: "deactivate" }).catch(() => {});
       return { ok: true };
     }
 
     case "resumeTab": {
       const { tabId } = message;
-      pausedTabs.delete(tabId);
+      activeTabs.add(tabId);
       updateIcon(tabId, true);
-      chrome.tabs.sendMessage(tabId, { type: "resume" }).catch(() => {});
+      chrome.tabs.sendMessage(tabId, { type: "activate" }).catch(() => {});
       return { ok: true };
     }
 
     case "getTabState": {
-      const { tabId, hostname } = message;
-      if (pausedTabs.has(tabId)) return { state: "paused" };
-      const enabled = hostname ? await isSiteEnabled(hostname) : false;
-      if (!enabled) return { state: "disabled" };
-      return { state: "active" };
+      const { tabId } = message;
+      if (activeTabs.has(tabId)) return { state: "active" };
+      return { state: "inactive" };
     }
 
     case "hasApiKey": {
@@ -406,23 +442,16 @@ async function handleMessage(
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
-    const tab = await chrome.tabs.get(activeInfo.tabId);
-    if (tab.url) {
-      const hostname = getHostname(tab.url);
-      const siteOn = hostname ? await isSiteEnabled(hostname) : false;
-      const active = siteOn && !pausedTabs.has(activeInfo.tabId);
-      updateIcon(activeInfo.tabId, active);
-    }
+    const active = activeTabs.has(activeInfo.tabId);
+    updateIcon(activeInfo.tabId, active);
   } catch {
     // tab 可能已关闭，静默忽略
   }
 });
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === "complete" && tab.url) {
-    const hostname = getHostname(tab.url);
-    const siteOn = hostname ? await isSiteEnabled(hostname) : false;
-    const active = siteOn && !pausedTabs.has(tabId);
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (changeInfo.status === "complete") {
+    const active = activeTabs.has(tabId);
     updateIcon(tabId, active);
   }
 });

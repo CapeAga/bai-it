@@ -197,9 +197,9 @@ async function init(): Promise<void> {
       type: "getTabState",
       tabId: currentTab.id,
       hostname: currentHostname,
-    })) as { state: "active" | "paused" | "disabled" };
+    })) as { state: "active" | "inactive" };
 
-    siteEnabled = result.state !== "disabled";
+    siteEnabled = true;
     isChunking = result.state === "active";
   }
 
@@ -235,15 +235,14 @@ async function init(): Promise<void> {
 
   // 大按钮：切换当前页面拆分
   actionBtn.addEventListener("click", async () => {
-    if (!siteEnabled || !currentTab?.id) return;
+    if (!currentTab?.id) return;
 
-    isChunking = !isChunking;
+    const result = (await sendMessage({
+      type: "toggleTab",
+      tabId: currentTab.id,
+    })) as { active: boolean };
 
-    if (isChunking) {
-      await sendMessage({ type: "resumeTab", tabId: currentTab.id });
-    } else {
-      await sendMessage({ type: "pauseTab", tabId: currentTab.id });
-    }
+    isChunking = result.active;
 
     updateActionButton();
     updateContentArea();
