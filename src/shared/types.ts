@@ -102,6 +102,7 @@ export type Message =
   | { type: "updateConfig"; config: Partial<BaitConfig> }
   | { type: "checkActive" }
   | { type: "toggleSite"; hostname: string }
+  | { type: "toggleTab"; tabId: number }
   | { type: "pauseTab"; tabId: number }
   | { type: "resumeTab"; tabId: number }
   | { type: "getTabState"; tabId: number; hostname: string }

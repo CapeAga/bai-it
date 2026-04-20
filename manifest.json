@@ -29,6 +29,15 @@
       "128": "icons/icon128.png"
     }
   },
+  "commands": {
+    "toggle-bait": {
+      "suggested_key": {
+        "default": "Alt+B",
+        "mac": "Alt+B"
+      },
+      "description": "开启/关闭当前页面的掰it功能"
+    }
+  },
   "options_page": "options.html",
   "icons": {
     "16": "icons/icon16.png",
