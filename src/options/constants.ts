@@ -30,6 +30,11 @@ export const PROVIDER_INFO: Record<
     models: ["kimi-k2.5", "moonshot-v1-8k"],
     hint: "K2.5 是当前主力模型。moonshot-v1 是旧版。",
   },
+  mimo: {
+    label: "MiMo",
+    models: ["MiMo-V2-Flash", "MiMo-V2-Pro", "MiMo-V2-Omni", "MiMo-V2-TTS"],
+    hint: "Flash 速度最快。Pro 推理能力最强。Omni 支持多模态。",
+  },
 };
 
 /** 句式 key → 中文名映射 */

@@ -5,7 +5,7 @@ import { chunkSentences } from "../../shared/llm-adapter.ts";
 import { GlassCard } from "../components/GlassCard.tsx";
 import { PROVIDER_INFO } from "../constants.ts";
 
-const PROVIDER_KEYS: ProviderKey[] = ["gemini", "chatgpt", "deepseek", "qwen", "kimi"];
+const PROVIDER_KEYS: ProviderKey[] = ["gemini", "chatgpt", "deepseek", "qwen", "kimi", "mimo"];
 
 const TEST_SENTENCE = "Although the project had been delayed by several unexpected issues, the team managed to deliver a working prototype on time.";
 
@@ -18,7 +18,7 @@ interface SettingsProps {
 export function Settings({ config, configLoading: loading, updateLLM }: SettingsProps) {
   const [activeProvider, setActiveProvider] = useState<ProviderKey>("gemini");
   const [verifyStatus, setVerifyStatus] = useState<Record<ProviderKey, "idle" | "checking" | "ok" | "error">>({
-    gemini: "idle", chatgpt: "idle", deepseek: "idle", qwen: "idle", kimi: "idle",
+    gemini: "idle", chatgpt: "idle", deepseek: "idle", qwen: "idle", kimi: "idle", mimo: "idle",
   });
   const [verifyError, setVerifyError] = useState<string>("");
 
