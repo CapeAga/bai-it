@@ -30,6 +30,11 @@ export const PROVIDER_INFO: Record<
     models: ["kimi-k2.5", "moonshot-v1-8k"],
     hint: "K2.5 是当前主力模型。moonshot-v1 是旧版。",
   },
+  custom: {
+    label: "自定义",
+    models: ["glm-4.5-flash", "glm-4.5", "deepseek-chat", "qwen3-flash"],
+    hint: "兼容所有 OpenAI 协议的端点。需手动填写端点地址和模型名称。",
+  },
 };
 
 /** 句式 key → 中文名映射 */
